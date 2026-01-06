@@ -31,6 +31,9 @@
     <label class="muted">Válasz (A)</label>
     <textarea class="input" name="answer" rows="6" required placeholder="Rövid, egyértelmű válasz...">{{ card.answer if card else '' }}</textarea>
 
+    <label class="muted">Magyarázat (opcionális)</label>
+    <textarea class="input" name="explanation" rows="4" placeholder="Rövid indoklás / kiegészítő kontextus...">{{ card.explanation if card else '' }}</textarea>
+
     <div class="actions">
       <button type="submit">💾 Mentés</button>
       <a class="buttonlike" href="/study/cards">↩️ Vissza</a>

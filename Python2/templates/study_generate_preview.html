@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>🔎 Generálás – előnézet</h1>
+
+{% if msg %}
+  <div class="card message warn">{{ msg }}</div>
+{% endif %}
+
+<div class="card">
+  <div class="muted" style="margin-bottom:10px;">
+    Összes jelölt: <b>{{ total }}</b> • Új: <b>{{ new_n }}</b> • Duplikált: <b>{{ dup_n }}</b>
+  </div>
+
+  <form method="post" action="/study/generate/commit">
+    <input type="hidden" name="token" value="{{ token }}">
+
+    <div class="actions" style="margin-bottom:10px;">
+      <button type="submit">💾 Kiválasztottak mentése</button>
+      <a class="buttonlike" href="/study">↩️ Vissza</a>
+    </div>
+
+    {% if total == 0 %}
+      <div class="muted">Nincs mit generálni ebből a forrásból. (Tipikusan: scannelt PDF vagy üres jegyzetek.)</div>
+    {% endif %}
+
+    {% for i, it in items %}
+      <div class="card" style="margin-top:12px; opacity:{% if it.is_dup %}0.6{% else %}1{% endif %};">
+        <label style="display:flex; align-items:flex-start; gap:10px;">
+          <input type="checkbox" name="pick" value="{{ i }}" {% if it.is_dup %}disabled{% else %}checked{% endif %}>
+          <div style="flex:1;">
+            <div class="muted" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+              <span>#{{ i + 1 }}</span>
+              <span>{% if it.source == 'notes' %}📝 notes{% else %}📄 docs{% endif %}</span>
+              {% if it.document_id %}<span>doc={{ it.document_id }}</span>{% endif %}
+              {% if it.note_id %}<span>note={{ it.note_id }}</span>{% endif %}
+              {% if it.is_dup %}<span style="padding:2px 8px; border:1px solid #333; border-radius:999px;">dup</span>{% endif %}
+            </div>
+
+            <div style="font-weight:700; margin-top:6px;">❓ {{ it.question }}</div>
+
+            <details style="margin-top:8px;">
+              <summary class="muted" style="cursor:pointer;">Válasz megtekintése</summary>
+              <pre style="white-space:pre-wrap; font-family:inherit; margin:10px 0 0 0;">{{ it.answer }}</pre>
+            </details>
+          </div>
+        </label>
+      </div>
+    {% endfor %}
+
+    <div class="actions" style="margin-top:12px;">
+      <button type="submit">💾 Kiválasztottak mentése</button>
+      <a class="buttonlike" href="/study">↩️ Vissza</a>
+    </div>
+  </form>
+
+  <p class="muted" style="margin-top:10px;">
+    Megjegyzés: a duplikált elemek automatikusan ki vannak kapcsolva, és mentésnél kimaradnak.
+  </p>
+</div>
+{% endblock %}

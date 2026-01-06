@@ -67,5 +67,4 @@ Then:
 ## Study v1.3 notes
 - Fix: PDF/notes wrapped lines no longer cut answers mid-sentence (better multi-line Q/A extraction)
 - Fix: removed duplicate FastAPI decorators (cleaner routing)
-- UX: Mini-Quiz answer options wrap better (less agressive truncation)
 - Added `.gitignore` so `uploads/` + `app.db` won’t be committed accidentally

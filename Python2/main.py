@@ -5,8 +5,12 @@ import hashlib
 import io
 import os
 import random
+import time
+import uuid
 from pathlib import Path
 from urllib.parse import quote_plus
+
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import (
@@ -49,6 +53,8 @@ from db import (
     get_random_distractors,
     review_card,
     study_stats,
+    existing_study_card_keys,
+    study_stats_by_document,
 )
 from tools import (
     safe_filename,
@@ -75,6 +81,26 @@ UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+# In-memory preview cache for Study generation (no auth/session yet)
+STUDY_PREVIEW_CACHE: Dict[str, Dict[str, Any]] = {}
+
+def _preview_cache_put(items: List[Dict[str, Any]]) -> str:
+    token = uuid.uuid4().hex
+    STUDY_PREVIEW_CACHE[token] = {"created_at": time.time(), "items": items}
+    # cleanup old previews (1h)
+    now = time.time()
+    for k, v in list(STUDY_PREVIEW_CACHE.items()):
+        if now - float(v.get("created_at", 0) or 0) > 3600:
+            STUDY_PREVIEW_CACHE.pop(k, None)
+    return token
+
+def _preview_cache_pop(token: str) -> Optional[List[Dict[str, Any]]]:
+    v = STUDY_PREVIEW_CACHE.pop(token, None)
+    if not v:
+        return None
+    return v.get("items")
+
 
 # static (css, js, etc.)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -1065,44 +1091,55 @@ def study_home(request: Request, msg: str = ""):
     return templates.TemplateResponse("study.html", ctx)
 
 
-@app.post("/study/generate")
-def study_generate(
+
+@app.post("/study/generate", response_class=HTMLResponse)
+def study_generate_preview(
     request: Request,
     doc: str = Form(""),
     include_notes: str = Form("1"),
     include_docs: str = Form(""),
 ):
-    """Generate study cards from notes (default) and optionally from document text.
+    """Generate a preview list of study cards (NEW-only save).
 
-    NOTE: "document text" works only for text-based PDFs. Scanned PDFs will usually produce 0 cards.
+    Notes are the default source. Optional: include document.search_text (text-based PDFs only).
     """
     doc_selected = _parse_int_or_none(doc)
 
-    do_notes = (include_notes == "1")
-    do_docs = (include_docs == "1")
+    def _is_checked(v: str) -> bool:
+        vv = (v or "").strip().lower()
+        return vv in ("1", "true", "on", "yes")
 
-    created_notes = 0
-    skipped_notes = 0
-    created_docs = 0
-    skipped_docs = 0
-    empty_docs = 0
+    do_notes = _is_checked(include_notes)
+    do_docs = _is_checked(include_docs)
 
-    # --- Notes -> cards ---
+    if not do_notes and not do_docs:
+        return RedirectResponse(url="/study?msg=" + quote_plus("⚠️ Jelölj be legalább egy forrást."), status_code=303)
+
+    items: List[Dict[str, Any]] = []
+
+    # --- Notes -> candidates ---
     if do_notes:
         notes = list_notes(limit=500, document_id=doc_selected)
         for n in notes:
             note_doc_id = doc_selected if doc_selected is not None else (n.get("document_id") or None)
             pairs = extract_qa_pairs(n.get("body") or "")
             for q, a in pairs:
-                cid, is_new = create_study_card(q, a, document_id=note_doc_id, note_id=n.get("id"))
-                if cid is None:
+                q2 = (q or "").strip()
+                a2 = (a or "").strip()
+                if not q2 or not a2:
                     continue
-                if is_new:
-                    created_notes += 1
-                else:
-                    skipped_notes += 1
+                items.append(
+                    {
+                        "question": q2,
+                        "answer": a2,
+                        "document_id": note_doc_id,
+                        "note_id": n.get("id"),
+                        "source": "notes",
+                    }
+                )
 
-    # --- Document search_text -> cards ---
+    # --- Docs -> candidates (uses search_text) ---
+    empty_docs = 0
     if do_docs:
         if doc_selected is not None:
             docs_to_use = [get_document(doc_selected)]
@@ -1118,29 +1155,110 @@ def study_generate(
                 empty_docs += 1
                 continue
 
-            # Keep generation bounded
             pairs = extract_qa_pairs(body)[:300]
             for q, a in pairs:
-                cid, is_new = create_study_card(q, a, document_id=int(d["id"]), note_id=None)
-                if cid is None:
+                q2 = (q or "").strip()
+                a2 = (a or "").strip()
+                if not q2 or not a2:
                     continue
-                if is_new:
-                    created_docs += 1
-                else:
-                    skipped_docs += 1
+                items.append(
+                    {
+                        "question": q2,
+                        "answer": a2,
+                        "document_id": int(d["id"]),
+                        "note_id": None,
+                        "source": "docs",
+                    }
+                )
 
-    parts = []
-    if do_notes:
-        parts.append(f"📝 notes: +{created_notes} | dup: {skipped_notes}")
-    if do_docs:
-        parts.append(f"📄 docs: +{created_docs} | dup: {skipped_docs} | no-text: {empty_docs}")
+    # Dedup within preview itself
+    uniq: List[Dict[str, Any]] = []
+    seen = set()
+    for it in items:
+        key = (it.get("document_id"), it.get("question"), it.get("answer"))
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(it)
+    items = uniq[:350]  # keep preview bounded
 
-    if not parts:
-        msg = "⚠️ Semmi nem történt (legalább egy forrást jelölj be)."
-    else:
-        msg = "✅ Kártyák generálva — " + " | ".join(parts)
+    doc_ids = list({it.get("document_id") for it in items})
+    existing = existing_study_card_keys(doc_ids)
+    new_n = 0
+    dup_n = 0
+    for it in items:
+        key = (it.get("document_id"), it.get("question"), it.get("answer"))
+        it["is_dup"] = key in existing
+        if it["is_dup"]:
+            dup_n += 1
+        else:
+            new_n += 1
 
-    return RedirectResponse(url=f"/study?msg={quote_plus(msg)}", status_code=303)
+    token = _preview_cache_put(items)
+
+    msg = ""
+    if empty_docs and do_docs:
+        msg = f"⚠️ {empty_docs} PDF-ben nincs kinyerhető szöveg (scannelt lehet)."
+
+    ctx = {
+        "request": request,
+        "docs": list_documents(),
+        "doc_selected": doc_selected,
+        "include_notes": 1 if do_notes else 0,
+        "include_docs": 1 if do_docs else 0,
+        "token": token,
+        "items": list(enumerate(items)),
+        "total": len(items),
+        "new_n": new_n,
+        "dup_n": dup_n,
+        "msg": msg,
+    }
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("study_generate_preview.html", ctx)
+
+
+@app.post("/study/generate/commit")
+def study_generate_commit(
+    request: Request,
+    token: str = Form(...),
+    pick: List[str] = Form([]),
+):
+    items = _preview_cache_pop((token or "").strip())
+    if not items:
+        return RedirectResponse(url="/study?msg=" + quote_plus("⚠️ Az előnézet lejárt. Generálj újra."), status_code=303)
+
+    # NEW-only save
+    created = 0
+    skipped_dup = 0
+    picked = []
+    for v in (pick or []):
+        try:
+            picked.append(int(v))
+        except Exception:
+            continue
+    picked = sorted(set([i for i in picked if 0 <= i < len(items)]))
+
+    for i in picked:
+        it = items[i]
+        if it.get("is_dup"):
+            skipped_dup += 1
+            continue
+        cid, is_new = create_study_card(
+            it.get("question") or "",
+            it.get("answer") or "",
+            document_id=it.get("document_id"),
+            note_id=it.get("note_id"),
+            explanation="",
+        )
+        if cid is None:
+            continue
+        if is_new:
+            created += 1
+        else:
+            skipped_dup += 1
+
+    msg = f"✅ Mentve: +{created} | duplikált: {skipped_dup} | kiválasztva: {len(picked)}"
+    return RedirectResponse(url="/study?msg=" + quote_plus(msg), status_code=303)
 
 
 @app.get("/study/cards", response_class=HTMLResponse)
@@ -1177,9 +1295,10 @@ def study_card_new_post(
     document_id: str = Form(""),
     question: str = Form(""),
     answer: str = Form(""),
+    explanation: str = Form(""),
 ):
     doc_id = _parse_int_or_none(document_id)
-    create_study_card(question, answer, document_id=doc_id, note_id=None)
+    create_study_card(question, answer, document_id=doc_id, note_id=None, explanation=explanation)
     return RedirectResponse(url="/study/cards", status_code=303)
 
 
@@ -1204,9 +1323,10 @@ def study_card_edit_post(
     document_id: str = Form(""),
     question: str = Form(""),
     answer: str = Form(""),
+    explanation: str = Form(""),
 ):
     doc_id = _parse_int_or_none(document_id)
-    update_study_card(card_id, question, answer, doc_id)
+    update_study_card(card_id, question, answer, explanation, doc_id)
     return RedirectResponse(url="/study/cards", status_code=303)
 
 
@@ -1340,6 +1460,7 @@ def study_quiz_answer(
 def study_stats_page(request: Request, doc: str = ""):
     doc_selected = _parse_int_or_none(doc)
     s = study_stats(doc_selected)
+    by_doc = study_stats_by_document()
     ctx = {
         "request": request,
         "docs": list_documents(),
@@ -1349,6 +1470,7 @@ def study_stats_page(request: Request, doc: str = ""):
         "dist": s["dist"],
         "acc": s["acc"],
         "weak": s["weak"],
+        "by_doc": by_doc,
     }
     ctx.update(_settings_context())
     return templates.TemplateResponse("study_stats.html", ctx)

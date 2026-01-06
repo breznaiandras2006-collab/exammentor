@@ -31,11 +31,15 @@
       {% endfor %}
     </select>
     <label style="display:flex; align-items:center; gap:10px; margin-top:10px;">
+      <input type="checkbox" name="include_notes" value="1" checked>
+      <span class="muted"><b>Jegyzetek</b> alapján (ajánlott)</span>
+    </label>
+    <label style="display:flex; align-items:center; gap:10px; margin-top:10px;">
       <input type="checkbox" name="include_docs" value="1">
       <span class="muted">PDF szöveg is (gyors, csak <b>szöveg-alapú</b> PDF-ekhez; scannelt PDF-nél kevés találat)</span>
     </label>
     <div class="actions">
-      <button type="submit">➕ Generálás</button>
+      <button type="submit">🔎 Előnézet</button>
     </div>
   </form>
   <p class="muted">AI nélkül: a sorokat próbáljuk Q/A párokká alakítani (pl. „Fogalom: definíció”, „Fogalom - definíció”, „Q:... A:...”). A PDF szöveg opció a dokumentumokból kinyert (limitált) keresőszöveget is felhasználja.</p>

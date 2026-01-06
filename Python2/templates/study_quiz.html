@@ -72,7 +72,7 @@
           <div style="margin:10px 0;">
             <label style="display:block; cursor:pointer;">
               <input type="radio" name="picked" value="{{ opt }}" required>
-              <span style="margin-left:8px; white-space:pre-wrap;">{{ opt[:260] }}{% if opt|length > 260 %}…{% endif %}</span>
+              <span style="margin-left:8px; white-space:normal; overflow-wrap:anywhere;">{{ opt }}</span>
             </label>
           </div>
         {% endfor %}

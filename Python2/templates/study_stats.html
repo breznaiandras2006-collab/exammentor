@@ -25,7 +25,43 @@
 
 <div class="card">
   <h2>Összkép</h2>
-  <p class="muted">Összes kártya: <b>{{ total }}</b> | Esedékes: <b>{{ due }}</b></p>
+  <p class="muted">Összes kártya: <b>{{ total }}</b> | Esedékes: <b>{{ due }}</b>
+</p>
+
+  {% if not doc_selected %}
+    <h3>📄 Dokumentumonként</h3>
+    <div class="muted" style="margin-bottom:8px;">Kártyák + esedékes + utolsó 7 nap review-jei.</div>
+    <div style="overflow:auto;">
+      <table style="width:100%; border-collapse:collapse;">
+        <thead>
+          <tr>
+            <th style="text-align:left; padding:8px; border-bottom:1px solid #222;">Dokumentum</th>
+            <th style="text-align:right; padding:8px; border-bottom:1px solid #222;">Kártya</th>
+            <th style="text-align:right; padding:8px; border-bottom:1px solid #222;">Esedékes</th>
+            <th style="text-align:right; padding:8px; border-bottom:1px solid #222;">7 nap review</th>
+            <th style="text-align:right; padding:8px; border-bottom:1px solid #222;">7 nap %</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for r in by_doc %}
+          {% if r.total > 0 %}
+          <tr>
+            <td style="padding:8px; border-bottom:1px solid #1b1b1b;">
+              <a href="/study/stats?doc={{ r.document_id }}">📄 {{ r.document_title }}</a>
+            </td>
+            <td style="padding:8px; border-bottom:1px solid #1b1b1b; text-align:right;">{{ r.total }}</td>
+            <td style="padding:8px; border-bottom:1px solid #1b1b1b; text-align:right;">{{ r.due }}</td>
+            <td style="padding:8px; border-bottom:1px solid #1b1b1b; text-align:right;">{{ r.rev7 }}</td>
+            <td style="padding:8px; border-bottom:1px solid #1b1b1b; text-align:right;">
+              {% if r.acc7 is none %}—{% else %}{{ r.acc7 }}%{% endif %}
+            </td>
+          </tr>
+          {% endif %}
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
 
   <h3>📦 Box eloszlás</h3>
   <ul>

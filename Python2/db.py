@@ -71,6 +71,7 @@ def init_db() -> None:
       note_id INTEGER NULL,
       question TEXT NOT NULL,
       answer TEXT NOT NULL,
+      explanation TEXT NOT NULL DEFAULT '',
       created_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE SET NULL,
       FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE SET NULL
@@ -107,6 +108,13 @@ def init_db() -> None:
     cur.execute("CREATE INDEX IF NOT EXISTS idx_study_cards_doc ON study_cards(document_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_study_srs_due ON study_srs(due_at)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_study_reviews_card ON study_reviews(card_id)")
+
+    # Migrations (lightweight): add missing columns without forcing DB reset
+    cur.execute("PRAGMA table_info(study_cards)")
+    cols = [r["name"] for r in cur.fetchall()]
+    if "explanation" not in cols:
+        cur.execute("ALTER TABLE study_cards ADD COLUMN explanation TEXT NOT NULL DEFAULT ''")
+
 
     # Defaults
     _set_default(cur, "ui_lang", "hu")
@@ -160,6 +168,7 @@ def create_study_card(
     answer: str,
     document_id: Optional[int] = None,
     note_id: Optional[int] = None,
+    explanation: str = "",
 ) -> Tuple[Optional[int], bool]:
     """Returns (card_id, created_new)."""
     q = (question or "").strip()
@@ -175,10 +184,10 @@ def create_study_card(
     cur = conn.cursor()
     cur.execute(
         """
-    INSERT INTO study_cards(document_id, note_id, question, answer)
-    VALUES(?,?,?,?)
+    INSERT INTO study_cards(document_id, note_id, question, answer, explanation)
+    VALUES(?,?,?,?,?)
     """,
-        (document_id, note_id, q, a),
+        (document_id, note_id, q, a, (explanation or '').strip()),
     )
     card_id = int(cur.lastrowid)
     cur.execute(
@@ -193,14 +202,14 @@ def create_study_card(
     return card_id, True
 
 
-def update_study_card(card_id: int, question: str, answer: str, document_id: Optional[int]) -> None:
+def update_study_card(card_id: int, question: str, answer: str, explanation: str, document_id: Optional[int]) -> None:
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
         """
-    UPDATE study_cards SET question=?, answer=?, document_id=? WHERE id=?
+    UPDATE study_cards SET question=?, answer=?, explanation=?, document_id=? WHERE id=?
     """,
-        ((question or "").strip(), (answer or "").strip(), document_id, int(card_id)),
+        ((question or "").strip(), (answer or "").strip(), (explanation or "").strip(), document_id, int(card_id)),
     )
     conn.commit()
     conn.close()
@@ -595,6 +604,90 @@ def insert_document(
     doc_id = cur.lastrowid
     conn.close()
     return int(doc_id)
+
+
+def existing_study_card_keys(document_ids: List[Optional[int]]) -> set[tuple[Optional[int], str, str]]:
+    """Return a set of (document_id, question, answer) for dedup checks."""
+    doc_ids = list(document_ids or [])
+    want_null = any(d is None for d in doc_ids)
+    ids = [int(d) for d in doc_ids if d is not None]
+
+    conn = get_conn()
+    cur = conn.cursor()
+    keys: set[tuple[Optional[int], str, str]] = set()
+
+    if want_null:
+        cur.execute("SELECT document_id, question, answer FROM study_cards WHERE document_id IS NULL")
+        for r in cur.fetchall():
+            keys.add((None, r["question"], r["answer"]))
+
+    if ids:
+        qs = ",".join(["?"] * len(ids))
+        cur.execute(f"SELECT document_id, question, answer FROM study_cards WHERE document_id IN ({qs})", ids)
+        for r in cur.fetchall():
+            keys.add((int(r["document_id"]), r["question"], r["answer"]))
+
+    conn.close()
+    return keys
+
+
+def study_stats_by_document() -> List[Dict[str, Any]]:
+    """Per-document summary for stats page (total, due, 7d accuracy)."""
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+    SELECT d.id AS document_id,
+           d.title AS document_title,
+           COUNT(c.id) AS total,
+           COALESCE(SUM(CASE WHEN date(s.due_at) <= date('now') THEN 1 ELSE 0 END), 0) AS due
+    FROM documents d
+    LEFT JOIN study_cards c ON c.document_id = d.id
+    LEFT JOIN study_srs s ON s.card_id = c.id
+    GROUP BY d.id
+    ORDER BY total DESC, d.id DESC
+    """
+    )
+    rows = [dict(r) for r in cur.fetchall()]
+
+    # 7-day accuracy by doc
+    cur.execute(
+        """
+    SELECT c.document_id AS document_id,
+           SUM(CASE WHEN r.correct=1 THEN 1 ELSE 0 END) AS correct,
+           COUNT(*) AS n
+    FROM study_reviews r
+    JOIN study_cards c ON c.id = r.card_id
+    WHERE datetime(r.created_at) >= datetime('now','-7 days')
+      AND c.document_id IS NOT NULL
+    GROUP BY c.document_id
+    """
+    )
+    acc_map: Dict[int, Dict[str, int]] = {}
+    for r in cur.fetchall():
+        acc_map[int(r["document_id"])] = {"correct": int(r["correct"] or 0), "n": int(r["n"] or 0)}
+
+    conn.close()
+
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        did = int(row["document_id"])
+        a = acc_map.get(did)
+        n = a["n"] if a else 0
+        correct = a["correct"] if a else 0
+        rate7 = int(round(100.0 * correct / n)) if n else None
+        out.append(
+            {
+                "document_id": did,
+                "document_title": row.get("document_title") or "",
+                "total": int(row.get("total") or 0),
+                "due": int(row.get("due") or 0),
+                "rev7": n,
+                "acc7": rate7,
+            }
+        )
+    return out
 
 
 def _doc_postprocess(d: Dict[str, Any]) -> Dict[str, Any]:
