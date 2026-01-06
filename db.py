@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 DB_PATH = "app.db"
 
@@ -10,6 +10,11 @@ DB_PATH = "app.db"
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    # Enable FK constraints (sqlite defaults to OFF)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+    except Exception:
+        pass
     return conn
 
 
@@ -57,6 +62,52 @@ def init_db() -> None:
     """
     )
 
+    # ---------------- Study (cards + simple SRS + reviews) ----------------
+    cur.execute(
+        """
+    CREATE TABLE IF NOT EXISTS study_cards (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      document_id INTEGER NULL,
+      note_id INTEGER NULL,
+      question TEXT NOT NULL,
+      answer TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE SET NULL,
+      FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE SET NULL
+    )
+    """
+    )
+
+    cur.execute(
+        """
+    CREATE TABLE IF NOT EXISTS study_srs (
+      card_id INTEGER PRIMARY KEY,
+      box INTEGER NOT NULL DEFAULT 1,
+      due_at TEXT NOT NULL DEFAULT (date('now')),
+      last_review_at TEXT NULL,
+      correct_streak INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY(card_id) REFERENCES study_cards(id) ON DELETE CASCADE
+    )
+    """
+    )
+
+    cur.execute(
+        """
+    CREATE TABLE IF NOT EXISTS study_reviews (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      card_id INTEGER NOT NULL,
+      correct INTEGER NOT NULL,
+      source TEXT NOT NULL DEFAULT 'session',
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY(card_id) REFERENCES study_cards(id) ON DELETE CASCADE
+    )
+    """
+    )
+
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_study_cards_doc ON study_cards(document_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_study_srs_due ON study_srs(due_at)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_study_reviews_card ON study_reviews(card_id)")
+
     # Defaults
     _set_default(cur, "ui_lang", "hu")
     _set_default(cur, "answer_language", "hu")
@@ -67,6 +118,418 @@ def init_db() -> None:
 
     conn.commit()
     conn.close()
+
+
+# ---------- study cards ----------
+_LEITNER_INTERVALS_DAYS = {1: 0, 2: 1, 3: 3, 4: 7, 5: 14}
+
+
+def _same_nullable(a: Any, b: Any) -> bool:
+    return (a is None and b is None) or (a == b)
+
+
+def _find_existing_card_id(document_id: Optional[int], question: str, answer: str) -> Optional[int]:
+    """Dedup helper (keeps null-doc distinct)."""
+    conn = get_conn()
+    cur = conn.cursor()
+    if document_id is None:
+        cur.execute(
+            """
+        SELECT id FROM study_cards
+        WHERE document_id IS NULL AND question=? AND answer=?
+        LIMIT 1
+        """,
+            (question, answer),
+        )
+    else:
+        cur.execute(
+            """
+        SELECT id FROM study_cards
+        WHERE document_id=? AND question=? AND answer=?
+        LIMIT 1
+        """,
+            (int(document_id), question, answer),
+        )
+    row = cur.fetchone()
+    conn.close()
+    return int(row["id"]) if row else None
+
+
+def create_study_card(
+    question: str,
+    answer: str,
+    document_id: Optional[int] = None,
+    note_id: Optional[int] = None,
+) -> Tuple[Optional[int], bool]:
+    """Returns (card_id, created_new)."""
+    q = (question or "").strip()
+    a = (answer or "").strip()
+    if not q or not a:
+        return None, False
+
+    existing = _find_existing_card_id(document_id, q, a)
+    if existing is not None:
+        return existing, False
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+    INSERT INTO study_cards(document_id, note_id, question, answer)
+    VALUES(?,?,?,?)
+    """,
+        (document_id, note_id, q, a),
+    )
+    card_id = int(cur.lastrowid)
+    cur.execute(
+        """
+    INSERT OR REPLACE INTO study_srs(card_id, box, due_at, last_review_at, correct_streak)
+    VALUES(?, 1, date('now'), NULL, 0)
+    """,
+        (card_id,),
+    )
+    conn.commit()
+    conn.close()
+    return card_id, True
+
+
+def update_study_card(card_id: int, question: str, answer: str, document_id: Optional[int]) -> None:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+    UPDATE study_cards SET question=?, answer=?, document_id=? WHERE id=?
+    """,
+        ((question or "").strip(), (answer or "").strip(), document_id, int(card_id)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_study_card(card_id: int) -> None:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM study_cards WHERE id=?", (int(card_id),))
+    conn.commit()
+    conn.close()
+
+
+def get_study_card(card_id: int) -> Optional[Dict[str, Any]]:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+    SELECT c.*, d.title AS document_title, s.box, s.due_at
+    FROM study_cards c
+    LEFT JOIN documents d ON d.id=c.document_id
+    LEFT JOIN study_srs s ON s.card_id=c.id
+    WHERE c.id=?
+    """,
+        (int(card_id),),
+    )
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def list_study_cards(
+    q: str = "",
+    document_id: Optional[int] = None,
+    limit: int = 200,
+) -> List[Dict[str, Any]]:
+    q2 = f"%{(q or '').strip()}%"
+    conn = get_conn()
+    cur = conn.cursor()
+
+    where = []
+    args: List[Any] = []
+    if (q or "").strip():
+        where.append("(c.question LIKE ? OR c.answer LIKE ?)")
+        args.extend([q2, q2])
+    if document_id is not None:
+        where.append("c.document_id=?")
+        args.append(int(document_id))
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    cur.execute(
+        f"""
+    SELECT c.*, d.title AS document_title, s.box, s.due_at
+    FROM study_cards c
+    LEFT JOIN documents d ON d.id=c.document_id
+    LEFT JOIN study_srs s ON s.card_id=c.id
+    {where_sql}
+    ORDER BY date(s.due_at) ASC, s.box ASC, c.id DESC
+    LIMIT ?
+    """,
+        (*args, int(limit)),
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_study_counts(document_id: Optional[int] = None) -> Tuple[int, int]:
+    conn = get_conn()
+    cur = conn.cursor()
+    if document_id is None:
+        cur.execute("SELECT COUNT(*) AS n FROM study_cards")
+        total = int(cur.fetchone()["n"])
+        cur.execute("SELECT COUNT(*) AS n FROM study_srs WHERE date(due_at) <= date('now')")
+        due = int(cur.fetchone()["n"])
+    else:
+        cur.execute("SELECT COUNT(*) AS n FROM study_cards WHERE document_id=?", (int(document_id),))
+        total = int(cur.fetchone()["n"])
+        cur.execute(
+            """
+        SELECT COUNT(*) AS n
+        FROM study_srs s
+        JOIN study_cards c ON c.id=s.card_id
+        WHERE c.document_id=? AND date(s.due_at) <= date('now')
+        """,
+            (int(document_id),),
+        )
+        due = int(cur.fetchone()["n"])
+    conn.close()
+    return total, due
+
+
+def get_next_due_card(document_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    conn = get_conn()
+    cur = conn.cursor()
+    if document_id is None:
+        cur.execute(
+            """
+        SELECT c.*, d.title AS document_title, s.box, s.due_at
+        FROM study_srs s
+        JOIN study_cards c ON c.id=s.card_id
+        LEFT JOIN documents d ON d.id=c.document_id
+        WHERE date(s.due_at) <= date('now')
+        ORDER BY date(s.due_at) ASC, s.box ASC, c.id ASC
+        LIMIT 1
+        """
+        )
+    else:
+        cur.execute(
+            """
+        SELECT c.*, d.title AS document_title, s.box, s.due_at
+        FROM study_srs s
+        JOIN study_cards c ON c.id=s.card_id
+        LEFT JOIN documents d ON d.id=c.document_id
+        WHERE c.document_id=? AND date(s.due_at) <= date('now')
+        ORDER BY date(s.due_at) ASC, s.box ASC, c.id ASC
+        LIMIT 1
+        """,
+            (int(document_id),),
+        )
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_random_card(document_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """Returns a random card (useful for practice mode when nothing is due)."""
+    conn = get_conn()
+    cur = conn.cursor()
+    if document_id is None:
+        cur.execute(
+            """
+        SELECT c.*, d.title AS document_title, s.box, s.due_at
+        FROM study_cards c
+        LEFT JOIN documents d ON d.id=c.document_id
+        LEFT JOIN study_srs s ON s.card_id=c.id
+        ORDER BY RANDOM()
+        LIMIT 1
+        """
+        )
+    else:
+        cur.execute(
+            """
+        SELECT c.*, d.title AS document_title, s.box, s.due_at
+        FROM study_cards c
+        LEFT JOIN documents d ON d.id=c.document_id
+        LEFT JOIN study_srs s ON s.card_id=c.id
+        WHERE c.document_id=?
+        ORDER BY RANDOM()
+        LIMIT 1
+        """
+            , (int(document_id),)
+        )
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_random_distractors(
+    *,
+    exclude_card_id: int,
+    document_id: Optional[int] = None,
+    k: int = 3,
+) -> List[str]:
+    conn = get_conn()
+    cur = conn.cursor()
+    out: List[str] = []
+
+    if document_id is not None:
+        cur.execute(
+            """
+        SELECT answer FROM study_cards
+        WHERE id != ? AND document_id=?
+        ORDER BY RANDOM()
+        LIMIT ?
+        """,
+            (int(exclude_card_id), int(document_id), int(k)),
+        )
+        out = [r["answer"] for r in cur.fetchall()]
+
+    if len(out) < k:
+        cur.execute(
+            """
+        SELECT answer FROM study_cards
+        WHERE id != ?
+        ORDER BY RANDOM()
+        LIMIT ?
+        """,
+            (int(exclude_card_id), int(k - len(out))),
+        )
+        out.extend([r["answer"] for r in cur.fetchall()])
+
+    conn.close()
+    # unique, keep order
+    seen = set()
+    uniq = []
+    for a in out:
+        if a in seen:
+            continue
+        seen.add(a)
+        uniq.append(a)
+    return uniq[:k]
+
+
+def review_card(card_id: int, correct: bool, source: str = "session") -> None:
+    """Updates SRS (Leitner) + logs a review."""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT box, correct_streak FROM study_srs WHERE card_id=?", (int(card_id),))
+    row = cur.fetchone()
+    if not row:
+        # ensure srs row exists
+        cur.execute(
+            """
+        INSERT OR REPLACE INTO study_srs(card_id, box, due_at, last_review_at, correct_streak)
+        VALUES(?, 1, date('now'), NULL, 0)
+        """,
+            (int(card_id),),
+        )
+        box = 1
+        streak = 0
+    else:
+        box = int(row["box"])
+        streak = int(row["correct_streak"])
+
+    if correct:
+        new_box = min(5, box + 1)
+        new_streak = streak + 1
+    else:
+        new_box = 1
+        new_streak = 0
+
+    interval = int(_LEITNER_INTERVALS_DAYS.get(new_box, 0))
+    cur.execute(
+        """
+    UPDATE study_srs
+    SET box=?,
+        due_at=date('now', ?),
+        last_review_at=datetime('now'),
+        correct_streak=?
+    WHERE card_id=?
+    """,
+        (new_box, f"+{interval} day", new_streak, int(card_id)),
+    )
+
+    cur.execute(
+        """
+    INSERT INTO study_reviews(card_id, correct, source)
+    VALUES(?,?,?)
+    """,
+        (int(card_id), 1 if correct else 0, (source or "session")),
+    )
+    conn.commit()
+    conn.close()
+
+
+def study_stats(document_id: Optional[int] = None) -> Dict[str, Any]:
+    """Returns {total,due,dist,acc,weak}."""
+    total, due = get_study_counts(document_id)
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    dist = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+    if document_id is None:
+        cur.execute("SELECT box, COUNT(*) AS n FROM study_srs GROUP BY box")
+    else:
+        cur.execute("""
+        SELECT s.box AS box, COUNT(*) AS n
+        FROM study_srs s
+        JOIN study_cards c ON c.id=s.card_id
+        WHERE c.document_id=?
+        GROUP BY s.box
+        """, (int(document_id),))
+    for r in cur.fetchall():
+        b = int(r["box"])
+        if b in dist:
+            dist[b] = int(r["n"])
+
+    if document_id is None:
+        cur.execute("SELECT correct FROM study_reviews ORDER BY id DESC LIMIT 50")
+    else:
+        cur.execute("""
+        SELECT r.correct
+        FROM study_reviews r
+        JOIN study_cards c ON c.id=r.card_id
+        WHERE c.document_id=?
+        ORDER BY r.id DESC
+        LIMIT 50
+        """, (int(document_id),))
+    rows = cur.fetchall()
+    n = len(rows)
+    correct_n = sum(int(r["correct"]) for r in rows)
+    wrong_n = n - correct_n
+    rate = int(round((correct_n / n) * 100)) if n else 0
+    acc = {"n": n, "correct": correct_n, "wrong": wrong_n, "rate": rate}
+
+    # weak cards: box 1, earliest due, plus last result
+    if document_id is None:
+        cur.execute(
+            """
+    SELECT c.*, d.title AS document_title, s.box, s.due_at,
+           (SELECT r.correct FROM study_reviews r WHERE r.card_id=c.id ORDER BY r.id DESC LIMIT 1) AS last_result
+    FROM study_cards c
+    LEFT JOIN documents d ON d.id=c.document_id
+    LEFT JOIN study_srs s ON s.card_id=c.id
+    WHERE s.box=1
+    ORDER BY date(s.due_at) ASC, c.id DESC
+    LIMIT 12
+    """
+        )
+    else:
+        cur.execute(
+            """
+    SELECT c.*, d.title AS document_title, s.box, s.due_at,
+           (SELECT r.correct FROM study_reviews r WHERE r.card_id=c.id ORDER BY r.id DESC LIMIT 1) AS last_result
+    FROM study_cards c
+    LEFT JOIN documents d ON d.id=c.document_id
+    LEFT JOIN study_srs s ON s.card_id=c.id
+    WHERE s.box=1 AND c.document_id=?
+    ORDER BY date(s.due_at) ASC, c.id DESC
+    LIMIT 12
+    """,
+            (int(document_id),),
+        )
+    weak = [dict(r) for r in cur.fetchall()]
+
+    conn.close()
+    return {"total": total, "due": due, "dist": dist, "acc": acc, "weak": weak}
 
 
 def _set_default(cur: sqlite3.Cursor, key: str, value: str) -> None:

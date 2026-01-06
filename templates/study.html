@@ -2,6 +2,12 @@
 {% block content %}
 <h1>📚 Study</h1>
 
+{% if msg %}
+  <div class="card" style="border:1px solid #2a3b2a;">
+    <p style="margin:0;">{{ msg }}</p>
+  </div>
+{% endif %}
+
 <div class="card">
   <h2>📌 Áttekintés</h2>
   <p class="muted">Összes kártya: <b>{{ total }}</b> | Esedékes ma: <b>{{ due }}</b></p>
@@ -10,6 +16,7 @@
     <a class="buttonlike" href="/study/quiz">🎲 Mini-Quiz</a>
     <a class="buttonlike" href="/study/cards">🗂️ Kártyák</a>
     <a class="buttonlike" href="/study/stats">📊 Stats</a>
+    <a class="buttonlike" href="/study/export/csv">⬇️ Export CSV</a>
   </div>
 </div>
 
@@ -27,6 +34,6 @@
       <button type="submit">➕ Generálás</button>
     </div>
   </form>
-  <p class="muted">AI nélkül: jegyzetből több kártya is lehet (bullet/“:” sorok alapján).</p>
+  <p class="muted">AI nélkül: a jegyzet sorait próbáljuk Q/A párokká alakítani (pl. „Fogalom: definíció”, „Fogalom - definíció”, „Q:... A:...”).</p>
 </div>
 {% endblock %}

@@ -32,9 +32,14 @@
   </div>
 {% else %}
   <div class="card">
+    {% if practice == 1 %}
+      <div class="muted">🧪 Gyakorló mód: nincs esedékes kártya, véletlenül választottunk egyet.</div>
+      <hr style="border:0;border-top:1px solid #222;margin:12px 0;">
+    {% endif %}
     <div class="muted">
       box={{ card.box }} | due={{ card.due_at }}
       {% if card.document_title %} | 📄 {{ card.document_title }}{% endif %}
+      {% if practice == 1 %}<span class="muted"> | 🎯 Practice (nem esedékes)</span>{% endif %}
     </div>
 
     <h2>❓ {{ card.question }}</h2>

@@ -22,6 +22,7 @@
     <div class="actions">
       <button type="submit">🔎 Szűrés</button>
       <a class="buttonlike" href="/study/cards">🧹 Reset</a>
+      <a class="buttonlike" href="/study/cards/new{% if doc_selected %}?doc={{ doc_selected }}{% endif %}">➕ Új kártya</a>
       <a class="buttonlike" href="/study">↩️ Study</a>
     </div>
   </form>
@@ -41,6 +42,12 @@
             {% if c.document_title %} | 📄 {{ c.document_title }}{% endif %}
           </div>
           <div class="muted">{{ c.answer[:180] }}{% if c.answer|length > 180 %}…{% endif %}</div>
+          <div class="actions" style="margin-top:8px;">
+            <a class="buttonlike" href="/study/cards/{{ c.id }}/edit">✏️ Szerkesztés</a>
+            <form method="post" action="/study/cards/{{ c.id }}/delete" onsubmit="return confirm('Biztos törlöd?');" style="display:inline;">
+              <button type="submit" style="background:#3a1b1b;">🗑️ Törlés</button>
+            </form>
+          </div>
         </li>
       {% endfor %}
     </ul>

@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import random
 from pathlib import Path
 from urllib.parse import quote_plus
 
@@ -36,6 +37,18 @@ from db import (
     search_notes,
     get_all_settings,
     set_setting,
+    # Study
+    create_study_card,
+    update_study_card,
+    delete_study_card,
+    get_study_card,
+    list_study_cards,
+    get_study_counts,
+    get_next_due_card,
+    get_random_card,
+    get_random_distractors,
+    review_card,
+    study_stats,
 )
 from tools import (
     safe_filename,
@@ -47,10 +60,12 @@ from tools import (
     parse_ranges,
     merge_pdf_bytes,
     delete_pages_pdf_bytes,
-    rotate_pages_pdf_bytes,    parse_page_sequence,
+    rotate_pages_pdf_bytes,
+    parse_page_sequence,
     extract_pages_pdf_bytes,
     reorder_pages_pdf_bytes,
-
+    # Study
+    extract_qa_pairs,
 )
 
 app = FastAPI()
@@ -1027,76 +1042,194 @@ def pdf_tools_reorder(request: Request, doc_id: int = Form(...), sequence_text: 
     )
 
 
-# ---------------- Study (C modul stub) ----------------
+# ---------------- Study (C modul) ----------------
+def _parse_int_or_none(x: str) -> int | None:
+    try:
+        s = (x or "").strip()
+        return int(s) if s else None
+    except Exception:
+        return None
+
+
 @app.get("/study", response_class=HTMLResponse)
-def study_home(request: Request):
-    ctx = {"request": request, "docs": list_documents(), "total": 0, "due": 0}
+def study_home(request: Request, msg: str = ""):
+    total, due = get_study_counts()
+    ctx = {
+        "request": request,
+        "docs": list_documents(),
+        "total": total,
+        "due": due,
+        "msg": (msg or "").strip(),
+    }
     ctx.update(_settings_context())
     return templates.TemplateResponse("study.html", ctx)
 
 
 @app.post("/study/generate")
 def study_generate(request: Request, doc: str = Form("")):
-    # Later: parse notes -> cards table.
-    return RedirectResponse(url="/study", status_code=303)
+    doc_selected = _parse_int_or_none(doc)
+
+    # Pull notes
+    notes = list_notes(limit=500, document_id=doc_selected)
+    created = 0
+    skipped = 0
+
+    for n in notes:
+        note_doc_id = doc_selected if doc_selected is not None else (n.get("document_id") or None)
+        pairs = extract_qa_pairs(n.get("body") or "")
+        for q, a in pairs:
+            cid, is_new = create_study_card(q, a, document_id=note_doc_id, note_id=n.get("id"))
+            if cid is None:
+                continue
+            if is_new:
+                created += 1
+            else:
+                skipped += 1
+
+    msg = f"✅ Kártyák generálva: {created} | duplikátum kihagyva: {skipped}"
+    return RedirectResponse(url=f"/study?msg={quote_plus(msg)}", status_code=303)
 
 
 @app.get("/study/cards", response_class=HTMLResponse)
-def study_cards(request: Request, q: str = "", doc: str = ""):
-    doc_selected = None
-    if (doc or "").strip():
-        try:
-            doc_selected = int(doc)
-        except Exception:
-            doc_selected = None
-
+def study_cards_page(request: Request, q: str = "", doc: str = ""):
+    doc_selected = _parse_int_or_none(doc)
+    cards = list_study_cards(q=(q or "").strip(), document_id=doc_selected, limit=300)
     ctx = {
         "request": request,
         "q": (q or "").strip(),
         "docs": list_documents(),
         "doc_selected": doc_selected,
-        "cards": [],
+        "cards": cards,
     }
     ctx.update(_settings_context())
     return templates.TemplateResponse("study_cards.html", ctx)
 
 
+@app.get("/study/cards/new", response_class=HTMLResponse)
+def study_card_new(request: Request, doc: str = ""):
+    doc_selected = _parse_int_or_none(doc)
+    ctx = {
+        "request": request,
+        "docs": list_documents(),
+        "doc_selected": doc_selected,
+        "card": None,
+    }
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("study_card_edit.html", ctx)
+
+
+@app.post("/study/cards/new")
+def study_card_new_post(
+    request: Request,
+    document_id: str = Form(""),
+    question: str = Form(""),
+    answer: str = Form(""),
+):
+    doc_id = _parse_int_or_none(document_id)
+    create_study_card(question, answer, document_id=doc_id, note_id=None)
+    return RedirectResponse(url="/study/cards", status_code=303)
+
+
+@app.get("/study/cards/{card_id}/edit", response_class=HTMLResponse)
+def study_card_edit(request: Request, card_id: int):
+    card = get_study_card(card_id)
+    ctx = {
+        "request": request,
+        "docs": list_documents(),
+        "doc_selected": card.get("document_id") if card else None,
+        "card": card,
+        "practice": 0,
+    }
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("study_card_edit.html", ctx)
+
+
+@app.post("/study/cards/{card_id}/edit")
+def study_card_edit_post(
+    request: Request,
+    card_id: int,
+    document_id: str = Form(""),
+    question: str = Form(""),
+    answer: str = Form(""),
+):
+    doc_id = _parse_int_or_none(document_id)
+    update_study_card(card_id, question, answer, doc_id)
+    return RedirectResponse(url="/study/cards", status_code=303)
+
+
+@app.post("/study/cards/{card_id}/delete")
+def study_card_delete_post(request: Request, card_id: int):
+    delete_study_card(card_id)
+    return RedirectResponse(url="/study/cards", status_code=303)
+
+
 @app.get("/study/session", response_class=HTMLResponse)
-def study_session(request: Request, doc: str = "", show: int = 0):
-    doc_selected = None
-    if (doc or "").strip():
-        try:
-            doc_selected = int(doc)
-        except Exception:
-            doc_selected = None
+def study_session(request: Request, doc: str = "", show: int = 0, card_id: int = 0):
+    doc_selected = _parse_int_or_none(doc)
+    show_int = int(show or 0)
+
+    practice = 0
+    card = None
+    if show_int == 1 and int(card_id) > 0:
+        card = get_study_card(int(card_id))
+    if not card:
+        card = get_next_due_card(doc_selected)
+
+    if not card:
+        card = get_random_card(doc_selected)
+        practice = 1 if card else 0
 
     ctx = {
         "request": request,
         "docs": list_documents(),
         "doc_selected": doc_selected,
-        "show": int(show or 0),
-        "card": None,
+        "show": show_int,
+        "card": card,
+        "practice": 0,
     }
     ctx.update(_settings_context())
     return templates.TemplateResponse("study_session.html", ctx)
 
 
+@app.post("/study/review")
+def study_review(
+    request: Request,
+    card_id: int = Form(...),
+    correct: int = Form(0),
+    doc: str = Form(""),
+):
+    doc_selected = _parse_int_or_none(doc)
+    review_card(int(card_id), bool(int(correct) == 1), source="session")
+    url = "/study/session"
+    if doc_selected is not None:
+        url += f"?doc={doc_selected}"
+    return RedirectResponse(url=url, status_code=303)
+
+
 @app.get("/study/quiz", response_class=HTMLResponse)
 def study_quiz(request: Request, doc: str = ""):
-    doc_selected = None
-    if (doc or "").strip():
-        try:
-            doc_selected = int(doc)
-        except Exception:
-            doc_selected = None
+    doc_selected = _parse_int_or_none(doc)
+    practice = 0
+    card = get_next_due_card(doc_selected)
+    if not card:
+        card = get_random_card(doc_selected)
+        practice = 1 if card else 0
+
+    options: list[str] = []
+    if card:
+        distractors = get_random_distractors(exclude_card_id=int(card["id"]), document_id=doc_selected, k=3)
+        options = [card["answer"], *distractors]
+        # shuffle options
+        random.shuffle(options)
 
     ctx = {
         "request": request,
         "docs": list_documents(),
         "doc_selected": doc_selected,
-        "card": None,
+        "card": card,
+        "practice": 0,
         "answered": 0,
-        "options": [],
+        "options": options,
         "picked": "",
         "is_correct": False,
     }
@@ -1104,25 +1237,72 @@ def study_quiz(request: Request, doc: str = ""):
     return templates.TemplateResponse("study_quiz.html", ctx)
 
 
-@app.post("/study/quiz/answer")
-def study_quiz_answer(request: Request):
-    return RedirectResponse(url="/study/quiz", status_code=303)
+@app.post("/study/quiz/answer", response_class=HTMLResponse)
+def study_quiz_answer(
+    request: Request,
+    card_id: int = Form(...),
+    picked: str = Form(""),
+    doc: str = Form(""),
+):
+    doc_selected = _parse_int_or_none(doc)
+    card = get_study_card(int(card_id))
+    if not card:
+        return RedirectResponse(url="/study/quiz", status_code=303)
 
+    picked2 = (picked or "").strip()
+    correct = picked2 == (card.get("answer") or "").strip()
+    review_card(int(card_id), bool(correct), source="quiz")
 
-@app.post("/study/review")
-def study_review(request: Request):
-    return RedirectResponse(url="/study/session", status_code=303)
+    ctx = {
+        "request": request,
+        "docs": list_documents(),
+        "doc_selected": doc_selected,
+        "card": card,
+        "practice": 0,
+        "answered": 1,
+        "options": [],
+        "picked": picked2,
+        "is_correct": bool(correct),
+    }
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("study_quiz.html", ctx)
 
 
 @app.get("/study/stats", response_class=HTMLResponse)
-def study_stats(request: Request):
+def study_stats_page(request: Request, doc: str = ""):
+    doc_selected = _parse_int_or_none(doc)
+    s = study_stats(doc_selected)
     ctx = {
         "request": request,
-        "total": 0,
-        "due": 0,
-        "dist": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0},
-        "acc": {"n": 0, "correct": 0, "wrong": 0, "rate": 0},
-        "weak": [],
+        "docs": list_documents(),
+        "doc_selected": doc_selected,
+        "total": s["total"],
+        "due": s["due"],
+        "dist": s["dist"],
+        "acc": s["acc"],
+        "weak": s["weak"],
     }
     ctx.update(_settings_context())
     return templates.TemplateResponse("study_stats.html", ctx)
+
+
+@app.get("/study/export/csv")
+def study_export_csv(doc: str = ""):
+    import csv
+    doc_selected = _parse_int_or_none(doc)
+    cards = list_study_cards(q="", document_id=doc_selected, limit=5000)
+
+    import io as _io
+    buf = _io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["card_id", "document", "box", "due_at", "question", "answer"])
+    for c in cards:
+        w.writerow([c.get('id'), c.get('document_title') or '', c.get('box') or '', c.get('due_at') or '', c.get('question') or '', c.get('answer') or ''])
+    data = buf.getvalue().encode('utf-8')
+
+    fname = 'study_cards.csv'
+    if doc_selected is not None:
+        fname = f'study_cards_doc_{doc_selected}.csv'
+    return StreamingResponse(_io.BytesIO(data), media_type='text/csv; charset=utf-8', headers={
+        'Content-Disposition': f'attachment; filename="{fname}"'
+    })

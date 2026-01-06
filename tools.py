@@ -10,6 +10,83 @@ from typing import List, Tuple, Optional
 from pypdf import PdfReader, PdfWriter
 
 
+# ---------------- Study helpers ----------------
+_SEP_PATTERNS = [
+    r"\s*:\s*",
+    r"\s+-\s+",
+    r"\s+–\s+",
+    r"\s+—\s+",
+    r"\s*=\s*",
+    r"\s*->\s*",
+    r"\s*=>\s*",
+]
+
+
+def extract_qa_pairs(note_body: str) -> List[Tuple[str, str]]:
+    """Heuristic Q/A extractor from a note body.
+
+    Supports common patterns:
+    - Term: definition
+    - Term - definition (also en-dash/em-dash)
+    - Q: ... / A: ... pairs
+    """
+    text = (note_body or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [ln.strip() for ln in text.split("\n")]
+    lines = [ln for ln in lines if ln]
+
+    out: List[Tuple[str, str]] = []
+
+    # Q:/A: mode
+    pending_q: Optional[str] = None
+    for ln in lines:
+        l = re.sub(r"^[\-*•\u2022\u25CF]+\s+", "", ln).strip()
+        if not l:
+            continue
+        if l.lower().startswith("q:"):
+            pending_q = l[2:].strip()
+            continue
+        if l.lower().startswith("a:") and pending_q:
+            a = l[2:].strip()
+            if pending_q and a:
+                out.append((pending_q, a))
+            pending_q = None
+            continue
+
+    # separator mode (line-by-line)
+    for ln in lines:
+        l = re.sub(r"^[\-*•\u2022\u25CF]+\s+", "", ln).strip()
+        if not l:
+            continue
+
+        # skip Q:/A: tokens handled already
+        if l.lower().startswith("q:") or l.lower().startswith("a:"):
+            continue
+
+        # try split on first matching separator
+        for pat in _SEP_PATTERNS:
+            m = re.search(pat, l)
+            if not m:
+                continue
+            left = l[: m.start()].strip()
+            right = l[m.end() :].strip()
+            if left and right:
+                # prevent obviously bad splits (super long "question")
+                if len(left) <= 180 and len(right) <= 4000:
+                    out.append((left, right))
+            break
+
+    # de-dup (keep order)
+    seen = set()
+    uniq: List[Tuple[str, str]] = []
+    for q, a in out:
+        key = (q.strip(), a.strip())
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(key)
+    return uniq
+
+
 def safe_filename(name: str, fallback: str = "file.pdf") -> str:
     """
     Makes a filename safe for saving on filesystem.

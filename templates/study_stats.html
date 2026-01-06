@@ -3,6 +3,27 @@
 <h1>📊 Study Stats</h1>
 
 <div class="card">
+  <form method="get" action="/study/stats">
+    <label class="muted">Dokumentum szűrő (opcionális)</label>
+    <select class="input" name="doc">
+      <option value="">— összes —</option>
+      {% for d in docs %}
+        {% if doc_selected == d.id %}
+          <option value="{{ d.id }}" selected>📄 {{ d.title }}</option>
+        {% else %}
+          <option value="{{ d.id }}">📄 {{ d.title }}</option>
+        {% endif %}
+      {% endfor %}
+    </select>
+    <div class="actions">
+      <button type="submit">🔁 Szűrés</button>
+      <a class="buttonlike" href="/study/export/csv{% if doc_selected %}?doc={{ doc_selected }}{% endif %}">⬇️ Export CSV</a>
+      <a class="buttonlike" href="/study">↩️ Study</a>
+    </div>
+  </form>
+</div>
+
+<div class="card">
   <h2>Összkép</h2>
   <p class="muted">Összes kártya: <b>{{ total }}</b> | Esedékes: <b>{{ due }}</b></p>
 
@@ -24,9 +45,6 @@
     </p>
   {% endif %}
 
-  <div class="actions">
-    <a class="buttonlike" href="/study">↩️ Study</a>
-  </div>
 </div>
 
 <div class="card">

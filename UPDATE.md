@@ -49,3 +49,16 @@ git push
 - Better validation (no more 500 on bad page ranges)
 - Field values persist after submit
 - Quick buttons: `1..N`, `N..1`, `Törlés` (auto-fill based on selected document's page count)
+
+## Study v1 notes
+- Study tab is now functional (no AI yet)
+  - Generate flashcards from Notes (patterns: `Term: def`, `Term - def`, `Q:` / `A:`)
+  - Session Q/A review (Leitner boxes 1..5)
+  - Mini-Quiz multiple choice
+  - Stats (box distribution + last 50 accuracy + weak cards)
+
+### Tip
+If you already have notes, first run:
+- **Study → Generálás**
+Then:
+- **Session** or **Mini-Quiz**
