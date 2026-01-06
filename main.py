@@ -1,0 +1,891 @@
+# main.py
+from __future__ import annotations
+
+import hashlib
+import io
+import os
+from pathlib import Path
+from urllib.parse import quote_plus
+
+from fastapi import FastAPI, Request, UploadFile, File, Form
+from fastapi.responses import (
+    HTMLResponse,
+    RedirectResponse,
+    FileResponse,
+    PlainTextResponse,
+    StreamingResponse,
+)
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+from docx import Document as DocxDocument
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+
+from db import (
+    init_db,
+    list_documents,
+    get_document,
+    insert_document,
+    search_documents,
+    list_notes,
+    get_note,
+    insert_note,
+    update_note,
+    delete_note,
+    search_notes,
+    get_all_settings,
+    set_setting,
+)
+from tools import (
+    safe_filename,
+    make_snippet,
+    extract_text_from_pdf,
+    pdf_page_count,
+    compress_pdf_bytes,
+    split_pdf_bytes,
+    parse_ranges,
+    merge_pdf_bytes,
+    delete_pages_pdf_bytes,
+    rotate_pages_pdf_bytes,
+)
+
+app = FastAPI()
+
+BASE_DIR = Path(__file__).parent
+UPLOAD_DIR = BASE_DIR / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+# static (css, js, etc.)
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+
+@app.on_event("startup")
+def _startup():
+    init_db()
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _settings_context() -> dict:
+    """Templates can use: s.answer_language, s.theme, etc."""
+    s = get_all_settings() or {}
+    s2 = dict(s)
+    # IMPORTANT: strings like "0" are truthy in Jinja → convert the common bools
+    s2["manual_mode"] = (s.get("manual_mode", "0") == "1")
+    return {"s": s2}
+
+
+def _parse_doc_ids(text_value: str):
+    """Parse comma-separated doc ids: "1,2,3" -> [1,2,3]."""
+    raw = (text_value or "").strip()
+    if not raw:
+        return []
+    out = []
+    for part in raw.split(","):
+        p = part.strip()
+        if not p:
+            continue
+        try:
+            out.append(int(p))
+        except Exception:
+            continue
+    # unique, keep order
+    seen = set()
+    uniq = []
+    for i in out:
+        if i in seen:
+            continue
+        seen.add(i)
+        uniq.append(i)
+    return uniq
+
+
+def _store_pdf_bytes_as_document(
+    pdf_bytes: bytes,
+    *,
+    title: str,
+    original_name: str,
+    language: str = "auto",
+) -> int:
+    """Save generated PDF into uploads/ + insert into documents table."""
+    safe_orig = safe_filename(original_name, "document.pdf")
+    raw = (safe_orig + str(os.urandom(8))).encode("utf-8", "ignore")
+    h = hashlib.sha256(raw).hexdigest()[:24]
+    stored_name = f"{h}_{safe_orig}"
+
+    (UPLOAD_DIR / stored_name).write_bytes(pdf_bytes)
+
+    try:
+        pages = pdf_page_count(pdf_bytes)
+    except Exception:
+        pages = 0
+
+    try:
+        search_text = extract_text_from_pdf(pdf_bytes, max_pages=25)
+    except Exception:
+        search_text = ""
+
+    return insert_document(
+        title=title,
+        original_name=original_name,
+        stored_name=stored_name,
+        language=(language or "auto"),
+        pages=pages,
+        doc_type="pdf",
+        search_text=search_text,
+    )
+
+
+# ---------------- Home / Onboarding ----------------
+@app.get("/", response_class=HTMLResponse)
+def home(request: Request):
+    ctx = {"request": request}
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("index.html", ctx)
+
+
+@app.get("/onboarding", response_class=HTMLResponse)
+def onboarding(request: Request):
+    ctx = {"request": request}
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("onboarding.html", ctx)
+
+
+# ---------------- Documents ----------------
+@app.get("/documents", response_class=HTMLResponse)
+def documents_page(request: Request):
+    docs = list_documents()
+    ctx = {"request": request, "docs": docs}
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("documents.html", ctx)
+
+
+@app.post("/documents/upload")
+async def documents_upload(
+    request: Request,
+    title: str = Form(""),
+    language: str = Form("auto"),
+    pdf: UploadFile = File(...),
+):
+    original = pdf.filename or "document.pdf"
+    safe_orig = safe_filename(original, "document.pdf")
+
+    raw = (original + str(os.urandom(8))).encode("utf-8", "ignore")
+    h = hashlib.sha256(raw).hexdigest()[:24]
+    stored_name = f"{h}_{safe_orig}"
+
+    target = UPLOAD_DIR / stored_name
+    data = await pdf.read()
+    target.write_bytes(data)
+
+    # quick extraction for text PDFs
+    try:
+        pages = pdf_page_count(data)
+    except Exception:
+        pages = 0
+
+    try:
+        search_text = extract_text_from_pdf(data, max_pages=25)
+    except Exception:
+        search_text = ""
+
+    title2 = (title or "").strip() or Path(original).stem
+
+    doc_id = insert_document(
+        title=title2,
+        original_name=original,
+        stored_name=stored_name,
+        language=(language or "auto"),
+        pages=pages,
+        doc_type="pdf",
+        search_text=search_text,
+    )
+
+    return RedirectResponse(url=f"/documents/{doc_id}", status_code=303)
+
+
+@app.get("/documents/{doc_id}", response_class=HTMLResponse)
+def document_detail(request: Request, doc_id: int):
+    doc = get_document(doc_id)
+    if not doc:
+        ctx = {"request": request, "message": "Document not found"}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("not_found.html", ctx, status_code=404)
+
+    file_url = f"/documents/{doc_id}/file"
+    ctx = {"request": request, "doc": doc, "file_url": file_url}
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("document_detail.html", ctx)
+
+
+@app.get("/documents/{doc_id}/file")
+def document_file(doc_id: int):
+    doc = get_document(doc_id)
+    if not doc:
+        return PlainTextResponse("Not found", status_code=404)
+
+    fp = UPLOAD_DIR / (doc.get("stored_name") or "")
+    if not fp.exists():
+        return PlainTextResponse("File missing", status_code=404)
+
+    # inline -> open in browser (not forced download)
+    return FileResponse(
+        str(fp),
+        media_type="application/pdf",
+        filename=doc.get("original_name", "document.pdf"),
+        headers={
+            "Content-Disposition": f'inline; filename="{doc.get("original_name","document.pdf")}"'
+        },
+    )
+
+
+@app.get("/documents/{doc_id}/download")
+def document_download(doc_id: int):
+    doc = get_document(doc_id)
+    if not doc:
+        return PlainTextResponse("Not found", status_code=404)
+
+    fp = UPLOAD_DIR / (doc.get("stored_name") or "")
+    if not fp.exists():
+        return PlainTextResponse("File missing", status_code=404)
+
+    return FileResponse(
+        str(fp),
+        media_type="application/pdf",
+        filename=doc.get("original_name", "document.pdf"),
+        headers={
+            "Content-Disposition": f'attachment; filename="{doc.get("original_name","document.pdf")}"'
+        },
+    )
+
+
+# ---------------- Notes ----------------
+@app.get("/notes", response_class=HTMLResponse)
+def notes_page(request: Request, doc: str = ""):
+    docs = list_documents()
+
+    doc_selected = None
+    if (doc or "").strip():
+        try:
+            doc_selected = int(doc)
+        except Exception:
+            doc_selected = None
+
+    notes = list_notes(document_id=doc_selected)
+
+    ctx = {
+        "request": request,
+        "notes": notes,
+        "docs": docs,
+        "doc_selected": doc_selected,
+    }
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("notes.html", ctx)
+
+
+@app.get("/notes/new", response_class=HTMLResponse)
+def note_new_page(request: Request, doc: str = ""):
+    doc_selected = None
+    if (doc or "").strip():
+        try:
+            doc_selected = int(doc)
+        except Exception:
+            doc_selected = None
+
+    ctx = {
+        "request": request,
+        "docs": list_documents(),
+        "mode": "new",
+        "note": {"title": "", "body": "", "document_id": doc_selected},
+    }
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("note_edit.html", ctx)
+
+
+@app.post("/notes/new")
+def note_new_post(
+    request: Request,
+    title: str = Form(""),
+    body: str = Form(""),
+    document_id: str = Form(""),
+):
+    title2 = (title or "").strip() or "Untitled"
+    body2 = (body or "").strip()
+
+    doc_id_val = None
+    if (document_id or "").strip():
+        try:
+            doc_id_val = int(document_id)
+        except Exception:
+            doc_id_val = None
+
+    nid = insert_note(title2, body2, doc_id_val)
+    return RedirectResponse(url=f"/notes/{nid}", status_code=303)
+
+
+@app.get("/notes/{note_id}", response_class=HTMLResponse)
+def note_detail(request: Request, note_id: int):
+    note = get_note(note_id)
+    if not note:
+        ctx = {"request": request, "message": "Note not found"}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("not_found.html", ctx, status_code=404)
+
+    doc = None
+    if note.get("document_id"):
+        doc = get_document(int(note["document_id"]))
+
+    ctx = {"request": request, "note": note, "doc": doc}
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("note_detail.html", ctx)
+
+
+@app.get("/notes/{note_id}/edit", response_class=HTMLResponse)
+def note_edit_page(request: Request, note_id: int):
+    note = get_note(note_id)
+    if not note:
+        ctx = {"request": request, "message": "Note not found"}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("not_found.html", ctx, status_code=404)
+
+    ctx = {
+        "request": request,
+        "note": note,
+        "docs": list_documents(),
+        "mode": "edit",
+    }
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("note_edit.html", ctx)
+
+
+@app.post("/notes/{note_id}/edit")
+def note_edit_post(
+    request: Request,
+    note_id: int,
+    title: str = Form(""),
+    body: str = Form(""),
+    document_id: str = Form(""),
+):
+    doc_id_val = None
+    if (document_id or "").strip():
+        try:
+            doc_id_val = int(document_id)
+        except Exception:
+            doc_id_val = None
+
+    update_note(note_id, (title or "").strip() or "Untitled", (body or "").strip(), doc_id_val)
+    return RedirectResponse(url=f"/notes/{note_id}", status_code=303)
+
+
+@app.post("/notes/{note_id}/delete")
+def note_delete(request: Request, note_id: int):
+    delete_note(note_id)
+    return RedirectResponse(url="/notes", status_code=303)
+
+
+@app.get("/notes/{note_id}/export/docx")
+def note_export_docx(note_id: int):
+    note = get_note(note_id)
+    if not note:
+        return PlainTextResponse("Not found", status_code=404)
+
+    docx = DocxDocument()
+    docx.add_heading(note.get("title") or "Note", level=1)
+
+    body = (note.get("body") or "").splitlines()
+    for line in body:
+        # keep it simple (later: markdown -> rich)
+        docx.add_paragraph(line)
+
+    buf = io.BytesIO()
+    docx.save(buf)
+    buf.seek(0)
+
+    filename = safe_filename((note.get("title") or "note") + ".docx", "note.docx")
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/notes/{note_id}/export/pdf")
+def note_export_pdf(note_id: int):
+    note = get_note(note_id)
+    if not note:
+        return PlainTextResponse("Not found", status_code=404)
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    width, height = A4
+
+    title = note.get("title") or "Note"
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(48, height - 64, title)
+
+    c.setFont("Helvetica", 11)
+    y = height - 92
+    for line in (note.get("body") or "").splitlines():
+        # basic line-wrapping
+        text = line.rstrip()
+        if not text:
+            y -= 14
+            continue
+        while len(text) > 110:
+            c.drawString(48, y, text[:110])
+            text = text[110:]
+            y -= 14
+            if y < 60:
+                c.showPage()
+                c.setFont("Helvetica", 11)
+                y = height - 64
+        c.drawString(48, y, text)
+        y -= 14
+        if y < 60:
+            c.showPage()
+            c.setFont("Helvetica", 11)
+            y = height - 64
+
+    c.showPage()
+    c.save()
+    buf.seek(0)
+
+    filename = safe_filename((note.get("title") or "note") + ".pdf", "note.pdf")
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ---------------- Ask ----------------
+@app.get("/ask", response_class=HTMLResponse)
+def ask_get(request: Request, q: str = "", scope: str = "all", doc: str = ""):
+    docs_list = list_documents()
+
+    doc_id_val = None
+    if (doc or "").strip():
+        try:
+            doc_id_val = int(doc)
+        except Exception:
+            doc_id_val = None
+
+    q2 = (q or "").strip()
+    results_notes = []
+    results_docs = []
+    answer_lines = []
+
+    if q2:
+        if scope in ("all", "notes"):
+            results_notes = search_notes(q=q2, document_id=doc_id_val, limit=12)
+        if scope in ("all", "docs"):
+            results_docs = search_documents(q=q2, limit=8)
+
+        # precompute snippets for templates
+        for n in results_notes:
+            n['snippet'] = make_snippet(n.get('body',''), q2)
+        for d in results_docs:
+            d['snippet'] = make_snippet(d.get('search_text',''), q2)
+
+        for n in results_notes[:6]:
+            snippet = make_snippet(n.get("body", ""), q2)
+            answer_lines.append(f"📝 {n.get('title','')} — {snippet}")
+
+        for d in results_docs[:4]:
+            snippet = make_snippet(d.get("search_text", ""), q2)
+            answer_lines.append(f"📄 {d.get('title','')} — {snippet}")
+
+    compiled_answer = "\n".join(answer_lines).strip()
+
+    ctx = {
+        "request": request,
+        "q": q2,
+        "scope": scope,
+        "docs": docs_list,
+        "doc_selected": doc_id_val,
+        "results_notes": results_notes,
+        "results_docs": results_docs,
+        "compiled_answer": compiled_answer,
+    }
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("ask.html", ctx)
+
+
+@app.post("/ask")
+def ask_post(request: Request, q: str = Form(""), scope: str = Form("all"), doc: str = Form("")):
+    q_enc = quote_plus((q or "").strip())
+    scope_enc = quote_plus((scope or "all").strip())
+    doc_enc = quote_plus((doc or "").strip())
+    return RedirectResponse(url=f"/ask?q={q_enc}&scope={scope_enc}&doc={doc_enc}", status_code=303)
+
+
+@app.post("/ask/save-note")
+def ask_save_note(
+    request: Request,
+    title: str = Form(""),
+    body: str = Form(""),
+    document_id: str = Form(""),
+):
+    title2 = (title or "").strip() or "Ask result"
+    body2 = (body or "").strip()
+
+    doc_id_val = None
+    if (document_id or "").strip():
+        try:
+            doc_id_val = int(document_id)
+        except Exception:
+            doc_id_val = None
+
+    nid = insert_note(title2, body2, doc_id_val)
+    return RedirectResponse(url=f"/notes/{nid}", status_code=303)
+
+
+# ---------------- Settings ----------------
+@app.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request):
+    ctx = {"request": request}
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("settings.html", ctx)
+
+
+@app.post("/settings")
+def settings_save(
+    request: Request,
+    ui_lang: str = Form("hu"),
+    answer_language: str = Form("hu"),
+    theme: str = Form("dark"),
+    manual_mode: str = Form(""),
+    translation_style: str = Form("precise"),
+    default_gpt_mode: str = Form("exam"),
+):
+    set_setting("ui_lang", (ui_lang or "hu").strip())
+    set_setting("answer_language", (answer_language or "hu").strip())
+    set_setting("theme", (theme or "dark").strip())
+
+    # checkbox returns "1" or missing
+    set_setting("manual_mode", "1" if (manual_mode == "1") else "0")
+    set_setting("translation_style", (translation_style or "precise").strip())
+    set_setting("default_gpt_mode", (default_gpt_mode or "exam").strip())
+
+    return RedirectResponse(url="/settings", status_code=303)
+
+
+# ---------------- PDF Tools (B modul) ----------------
+@app.get("/pdf-tools", response_class=HTMLResponse)
+def pdf_tools_page(request: Request):
+    ctx = {
+        "request": request,
+        "docs": list_documents(),
+        "result": None,
+        "created_docs": [],
+    }
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("pdf_tools.html", ctx)
+
+
+@app.post("/pdf-tools/compress", response_class=HTMLResponse)
+def pdf_tools_compress(request: Request, doc_id: int = Form(...)):
+    doc = get_document(doc_id)
+    if not doc:
+        ctx = {"request": request, "docs": list_documents(), "result": "❌ Document not found", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+
+    fp = UPLOAD_DIR / (doc.get("stored_name") or "")
+    if not fp.exists():
+        ctx = {"request": request, "docs": list_documents(), "result": "❌ File missing", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+
+    data = fp.read_bytes()
+    out = compress_pdf_bytes(data)
+
+    original_out = f"compressed_{doc.get('original_name','document.pdf')}"
+    title_out = f"Compressed — {doc.get('title') or doc.get('original_name','PDF')}"
+    new_id = _store_pdf_bytes_as_document(out, title=title_out, original_name=original_out, language=doc.get("language") or "auto")
+
+    new_doc = get_document(new_id)
+    ctx = {
+        "request": request,
+        "docs": list_documents(),
+        "result": "✅ Compressed PDF created.",
+        "created_docs": [new_doc] if new_doc else [],
+    }
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("pdf_tools.html", ctx)
+
+
+@app.post("/pdf-tools/split", response_class=HTMLResponse)
+def pdf_tools_split(request: Request, doc_id: int = Form(...), ranges_text: str = Form("")):
+    doc = get_document(doc_id)
+    if not doc:
+        ctx = {"request": request, "docs": list_documents(), "result": "❌ Document not found", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+
+    fp = UPLOAD_DIR / (doc.get("stored_name") or "")
+    if not fp.exists():
+        ctx = {"request": request, "docs": list_documents(), "result": "❌ File missing", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+
+    ranges = parse_ranges(ranges_text)
+    if not ranges:
+        ctx = {
+            "request": request,
+            "docs": list_documents(),
+            "result": "⚠️ Adj meg oldaltartományt pl: 1-2, 3-5",
+            "created_docs": [],
+        }
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+
+    data = fp.read_bytes()
+    parts = split_pdf_bytes(data, ranges)
+
+    created = []
+    base = Path(doc.get("original_name") or "document.pdf").stem
+    for fname, bts in parts:
+        out_original = f"{base}_{fname}"
+        out_title = f"{doc.get('title') or base} — {fname.replace('.pdf','')}"
+        new_id = _store_pdf_bytes_as_document(bts, title=out_title, original_name=out_original, language=doc.get("language") or "auto")
+        nd = get_document(new_id)
+        if nd:
+            created.append(nd)
+
+    ctx = {
+        "request": request,
+        "docs": list_documents(),
+        "result": f"✅ Split created: {len(created)} part(s).",
+        "created_docs": created,
+    }
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("pdf_tools.html", ctx)
+
+
+@app.post("/pdf-tools/merge", response_class=HTMLResponse)
+def pdf_tools_merge(request: Request, doc_ids_text: str = Form("")):
+    ids = _parse_doc_ids(doc_ids_text)
+    if len(ids) < 2:
+        ctx = {
+            "request": request,
+            "docs": list_documents(),
+            "result": "⚠️ Adj meg legalább 2 doc ID-t: 1,2",
+            "created_docs": [],
+        }
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+
+    pdf_list = []
+    titles = []
+    lang = "auto"
+
+    for doc_id in ids:
+        doc = get_document(doc_id)
+        if not doc:
+            continue
+        fp = UPLOAD_DIR / (doc.get("stored_name") or "")
+        if not fp.exists():
+            continue
+        pdf_list.append(fp.read_bytes())
+        titles.append(doc.get("title") or f"#{doc_id}")
+        lang = doc.get("language") or lang
+
+    if len(pdf_list) < 2:
+        ctx = {
+            "request": request,
+            "docs": list_documents(),
+            "result": "❌ Nem találtam legalább 2 érvényes PDF-et a megadott ID-khez.",
+            "created_docs": [],
+        }
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+
+    out = merge_pdf_bytes(pdf_list)
+    out_original = f"merged_{'_'.join(str(i) for i in ids)}.pdf"
+    out_title = "Merged — " + ", ".join(titles[:3]) + ("…" if len(titles) > 3 else "")
+
+    new_id = _store_pdf_bytes_as_document(out, title=out_title, original_name=out_original, language=lang)
+    new_doc = get_document(new_id)
+
+    ctx = {
+        "request": request,
+        "docs": list_documents(),
+        "result": "✅ Merged PDF created.",
+        "created_docs": [new_doc] if new_doc else [],
+    }
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("pdf_tools.html", ctx)
+
+
+@app.post("/pdf-tools/delete-pages", response_class=HTMLResponse)
+def pdf_tools_delete_pages(request: Request, doc_id: int = Form(...), ranges_text: str = Form("")):
+    doc = get_document(doc_id)
+    if not doc:
+        ctx = {"request": request, "docs": list_documents(), "result": "❌ Document not found", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+
+    ranges = parse_ranges(ranges_text)
+    if not ranges:
+        ctx = {"request": request, "docs": list_documents(), "result": "⚠️ Adj meg oldaltartományt pl: 1-2, 4", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+
+    fp = UPLOAD_DIR / (doc.get("stored_name") or "")
+    if not fp.exists():
+        ctx = {"request": request, "docs": list_documents(), "result": "❌ File missing", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+
+    out = delete_pages_pdf_bytes(fp.read_bytes(), ranges)
+    out_original = f"pages_removed_{doc.get('original_name','document.pdf')}"
+    out_title = f"Pages removed — {doc.get('title') or doc.get('original_name','PDF')}"
+
+    new_id = _store_pdf_bytes_as_document(out, title=out_title, original_name=out_original, language=doc.get("language") or "auto")
+    new_doc = get_document(new_id)
+
+    ctx = {"request": request, "docs": list_documents(), "result": "✅ Pages removed (new document created).", "created_docs": [new_doc] if new_doc else []}
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("pdf_tools.html", ctx)
+
+
+@app.post("/pdf-tools/rotate", response_class=HTMLResponse)
+def pdf_tools_rotate(request: Request, doc_id: int = Form(...), ranges_text: str = Form(""), degrees: int = Form(90)):
+    doc = get_document(doc_id)
+    if not doc:
+        ctx = {"request": request, "docs": list_documents(), "result": "❌ Document not found", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+
+    ranges = parse_ranges(ranges_text)
+    if not ranges:
+        ctx = {"request": request, "docs": list_documents(), "result": "⚠️ Adj meg oldaltartományt pl: 1-2, 4", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+
+    fp = UPLOAD_DIR / (doc.get("stored_name") or "")
+    if not fp.exists():
+        ctx = {"request": request, "docs": list_documents(), "result": "❌ File missing", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+
+    try:
+        out = rotate_pages_pdf_bytes(fp.read_bytes(), ranges, int(degrees))
+    except Exception:
+        ctx = {"request": request, "docs": list_documents(), "result": "⚠️ A forgatás fokszáma 90/180/270 legyen.", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+
+    out_original = f"rotated_{degrees}_{doc.get('original_name','document.pdf')}"
+    out_title = f"Rotated {degrees}° — {doc.get('title') or doc.get('original_name','PDF')}"
+
+    new_id = _store_pdf_bytes_as_document(out, title=out_title, original_name=out_original, language=doc.get("language") or "auto")
+    new_doc = get_document(new_id)
+
+    ctx = {"request": request, "docs": list_documents(), "result": "✅ Rotated (new document created).", "created_docs": [new_doc] if new_doc else []}
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("pdf_tools.html", ctx)
+
+
+# ---------------- Study (C modul stub) ----------------
+@app.get("/study", response_class=HTMLResponse)
+def study_home(request: Request):
+    ctx = {"request": request, "docs": list_documents(), "total": 0, "due": 0}
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("study.html", ctx)
+
+
+@app.post("/study/generate")
+def study_generate(request: Request, doc: str = Form("")):
+    # Later: parse notes -> cards table.
+    return RedirectResponse(url="/study", status_code=303)
+
+
+@app.get("/study/cards", response_class=HTMLResponse)
+def study_cards(request: Request, q: str = "", doc: str = ""):
+    doc_selected = None
+    if (doc or "").strip():
+        try:
+            doc_selected = int(doc)
+        except Exception:
+            doc_selected = None
+
+    ctx = {
+        "request": request,
+        "q": (q or "").strip(),
+        "docs": list_documents(),
+        "doc_selected": doc_selected,
+        "cards": [],
+    }
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("study_cards.html", ctx)
+
+
+@app.get("/study/session", response_class=HTMLResponse)
+def study_session(request: Request, doc: str = "", show: int = 0):
+    doc_selected = None
+    if (doc or "").strip():
+        try:
+            doc_selected = int(doc)
+        except Exception:
+            doc_selected = None
+
+    ctx = {
+        "request": request,
+        "docs": list_documents(),
+        "doc_selected": doc_selected,
+        "show": int(show or 0),
+        "card": None,
+    }
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("study_session.html", ctx)
+
+
+@app.get("/study/quiz", response_class=HTMLResponse)
+def study_quiz(request: Request, doc: str = ""):
+    doc_selected = None
+    if (doc or "").strip():
+        try:
+            doc_selected = int(doc)
+        except Exception:
+            doc_selected = None
+
+    ctx = {
+        "request": request,
+        "docs": list_documents(),
+        "doc_selected": doc_selected,
+        "card": None,
+        "answered": 0,
+        "options": [],
+        "picked": "",
+        "is_correct": False,
+    }
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("study_quiz.html", ctx)
+
+
+@app.post("/study/quiz/answer")
+def study_quiz_answer(request: Request):
+    return RedirectResponse(url="/study/quiz", status_code=303)
+
+
+@app.post("/study/review")
+def study_review(request: Request):
+    return RedirectResponse(url="/study/session", status_code=303)
+
+
+@app.get("/study/stats", response_class=HTMLResponse)
+def study_stats(request: Request):
+    ctx = {
+        "request": request,
+        "total": 0,
+        "due": 0,
+        "dist": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0},
+        "acc": {"n": 0, "correct": 0, "wrong": 0, "rate": 0},
+        "weak": [],
+    }
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("study_stats.html", ctx)

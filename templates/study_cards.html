@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>🗂️ Study Cards</h1>
+
+<div class="card">
+  <form method="get" action="/study/cards">
+    <label class="muted">Keresés</label>
+    <input class="input" name="q" value="{{ q }}" placeholder="kérdés vagy válasz részlet..." />
+
+    <label class="muted">Dokumentum szűrő</label>
+    <select class="input" name="doc">
+      <option value="">— összes —</option>
+      {% for d in docs %}
+        {% if doc_selected == d.id %}
+          <option value="{{ d.id }}" selected>📄 {{ d.title }}</option>
+        {% else %}
+          <option value="{{ d.id }}">📄 {{ d.title }}</option>
+        {% endif %}
+      {% endfor %}
+    </select>
+
+    <div class="actions">
+      <button type="submit">🔎 Szűrés</button>
+      <a class="buttonlike" href="/study/cards">🧹 Reset</a>
+      <a class="buttonlike" href="/study">↩️ Study</a>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Lista</h2>
+  {% if not cards %}
+    <p class="muted">Nincs kártya. Menj a Study oldalra és generálj.</p>
+  {% else %}
+    <ul>
+      {% for c in cards %}
+        <li style="margin-bottom:12px;">
+          <b>Q:</b> {{ c.question }}
+          <div class="muted">
+            box={{ c.box }} | due={{ c.due_at }}
+            {% if c.document_title %} | 📄 {{ c.document_title }}{% endif %}
+          </div>
+          <div class="muted">{{ c.answer[:180] }}{% if c.answer|length > 180 %}…{% endif %}</div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+</div>
+{% endblock %}

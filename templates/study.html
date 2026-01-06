@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>📚 Study</h1>
+
+<div class="card">
+  <h2>📌 Áttekintés</h2>
+  <p class="muted">Összes kártya: <b>{{ total }}</b> | Esedékes ma: <b>{{ due }}</b></p>
+  <div class="actions">
+    <a class="buttonlike" href="/study/session">▶️ Session (Q/A)</a>
+    <a class="buttonlike" href="/study/quiz">🎲 Mini-Quiz</a>
+    <a class="buttonlike" href="/study/cards">🗂️ Kártyák</a>
+    <a class="buttonlike" href="/study/stats">📊 Stats</a>
+  </div>
+</div>
+
+<div class="card">
+  <h2>⚙️ Kártyák generálása jegyzetekből</h2>
+  <form method="post" action="/study/generate">
+    <label class="muted">Dokumentum szűrő (opcionális)</label>
+    <select class="input" name="doc">
+      <option value="">— minden dokumentum —</option>
+      {% for d in docs %}
+        <option value="{{ d.id }}">📄 {{ d.title }}</option>
+      {% endfor %}
+    </select>
+    <div class="actions">
+      <button type="submit">➕ Generálás</button>
+    </div>
+  </form>
+  <p class="muted">AI nélkül: jegyzetből több kártya is lehet (bullet/“:” sorok alapján).</p>
+</div>
+{% endblock %}

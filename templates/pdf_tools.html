@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block content %}
+<h1 class="page-title">🛠️ PDF Tools</h1>
+
+<div class="card">
+  <h2 style="margin-top:0;">📦 Tömörítés</h2>
+  <form method="post" action="/pdf-tools/compress">
+    <label class="muted">Dokumentum</label>
+    <select class="input" name="doc_id" required>
+      <option value="">— válassz —</option>
+      {% for d in docs %}
+        <option value="{{ d.id }}">#{{ d.id }} — {{ d.title }} ({{ d.pages or d.page_count or "?" }} oldal)</option>
+      {% endfor %}
+    </select>
+    <div class="actions">
+      <button type="submit">Futtatás</button>
+    </div>
+    <p class="muted">Basic: újraírás + stream compress. Később: erősebb tömörítés / OCR.</p>
+  </form>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">✂️ Split (oldaltartományok)</h2>
+  <form method="post" action="/pdf-tools/split">
+    <label class="muted">Dokumentum</label>
+    <select class="input" name="doc_id" required>
+      <option value="">— válassz —</option>
+      {% for d in docs %}
+        <option value="{{ d.id }}">#{{ d.id }} — {{ d.title }} ({{ d.pages or d.page_count or "?" }} oldal)</option>
+      {% endfor %}
+    </select>
+
+    <label class="muted">Tartományok (példa: 1-3, 5, 8-10)</label>
+    <input class="input" name="ranges_text" placeholder="1-3, 5, 8-10" />
+
+    <div class="actions">
+      <button type="submit">Split</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">🧩 Merge (több PDF összeillesztése)</h2>
+  <form method="post" action="/pdf-tools/merge">
+    <label class="muted">Doc ID-k (vesszővel elválasztva, sorrend számít)</label>
+    <input class="input" name="doc_ids_text" placeholder="1, 2, 3" />
+    <div class="actions">
+      <button type="submit">Merge</button>
+    </div>
+    <p class="muted">Tipp: a dokumentum ID-ket a Documents listában látod (#1, #2, ...).</p>
+  </form>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">🗑️ Oldalak törlése</h2>
+  <form method="post" action="/pdf-tools/delete-pages">
+    <label class="muted">Dokumentum</label>
+    <select class="input" name="doc_id" required>
+      <option value="">— válassz —</option>
+      {% for d in docs %}
+        <option value="{{ d.id }}">#{{ d.id }} — {{ d.title }} ({{ d.pages or d.page_count or "?" }} oldal)</option>
+      {% endfor %}
+    </select>
+
+    <label class="muted">Törlendő tartományok (példa: 1-2, 4)</label>
+    <input class="input" name="ranges_text" placeholder="1-2, 4" />
+
+    <div class="actions">
+      <button type="submit">Delete pages</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">🔄 Forgatás</h2>
+  <form method="post" action="/pdf-tools/rotate">
+    <label class="muted">Dokumentum</label>
+    <select class="input" name="doc_id" required>
+      <option value="">— válassz —</option>
+      {% for d in docs %}
+        <option value="{{ d.id }}">#{{ d.id }} — {{ d.title }} ({{ d.pages or d.page_count or "?" }} oldal)</option>
+      {% endfor %}
+    </select>
+
+    <label class="muted">Tartományok (példa: 1-2, 4)</label>
+    <input class="input" name="ranges_text" placeholder="1-2, 4" />
+
+    <label class="muted">Fok</label>
+    <select class="input" name="degrees">
+      <option value="90">90°</option>
+      <option value="180">180°</option>
+      <option value="270">270°</option>
+    </select>
+
+    <div class="actions">
+      <button type="submit">Rotate</button>
+    </div>
+  </form>
+</div>
+
+{% if result %}
+  <div class="card">
+    <b>✅ Info:</b>
+    <div class="muted">{{ result }}</div>
+  </div>
+{% endif %}
+
+{% if created_docs and created_docs|length > 0 %}
+  <div class="card">
+    <h2 style="margin-top:0;">🆕 Létrehozott dokumentumok</h2>
+    <ul class="list">
+      {% for d in created_docs %}
+        <li>
+          <a href="/documents/{{ d.id }}"><b>#{{ d.id }} — {{ d.title }}</b></a>
+          <span class="muted">— {{ d.pages or "?" }} oldal</span>
+          <span class="muted"> • </span>
+          <a href="/documents/{{ d.id }}/file" target="_blank" rel="noopener">Open</a>
+          <span class="muted"> | </span>
+          <a href="/documents/{{ d.id }}/download">Download</a>
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}
+
+{% endblock %}
