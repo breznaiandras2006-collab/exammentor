@@ -21,7 +21,7 @@
 </div>
 
 <div class="card">
-  <h2>⚙️ Kártyák generálása jegyzetekből</h2>
+  <h2>⚙️ Kártyák generálása (jegyzet + PDF szöveg)</h2>
   <form method="post" action="/study/generate">
     <label class="muted">Dokumentum szűrő (opcionális)</label>
     <select class="input" name="doc">
@@ -30,10 +30,14 @@
         <option value="{{ d.id }}">📄 {{ d.title }}</option>
       {% endfor %}
     </select>
+    <label style="display:flex; align-items:center; gap:10px; margin-top:10px;">
+      <input type="checkbox" name="include_docs" value="1">
+      <span class="muted">PDF szöveg is (gyors, csak <b>szöveg-alapú</b> PDF-ekhez; scannelt PDF-nél kevés találat)</span>
+    </label>
     <div class="actions">
       <button type="submit">➕ Generálás</button>
     </div>
   </form>
-  <p class="muted">AI nélkül: a jegyzet sorait próbáljuk Q/A párokká alakítani (pl. „Fogalom: definíció”, „Fogalom - definíció”, „Q:... A:...”).</p>
+  <p class="muted">AI nélkül: a sorokat próbáljuk Q/A párokká alakítani (pl. „Fogalom: definíció”, „Fogalom - definíció”, „Q:... A:...”). A PDF szöveg opció a dokumentumokból kinyert (limitált) keresőszöveget is felhasználja.</p>
 </div>
 {% endblock %}

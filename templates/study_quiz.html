@@ -66,6 +66,7 @@
       <form method="post" action="/study/quiz/answer">
         <input type="hidden" name="card_id" value="{{ card.id }}">
         <input type="hidden" name="doc" value="{{ doc_selected if doc_selected else '' }}">
+        <input type="hidden" name="practice" value="{{ practice }}">
 
         {% for opt in options %}
           <div style="margin:10px 0;">

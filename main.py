@@ -1066,27 +1066,80 @@ def study_home(request: Request, msg: str = ""):
 
 
 @app.post("/study/generate")
-def study_generate(request: Request, doc: str = Form("")):
+def study_generate(
+    request: Request,
+    doc: str = Form(""),
+    include_notes: str = Form("1"),
+    include_docs: str = Form(""),
+):
+    """Generate study cards from notes (default) and optionally from document text.
+
+    NOTE: "document text" works only for text-based PDFs. Scanned PDFs will usually produce 0 cards.
+    """
     doc_selected = _parse_int_or_none(doc)
 
-    # Pull notes
-    notes = list_notes(limit=500, document_id=doc_selected)
-    created = 0
-    skipped = 0
+    do_notes = (include_notes == "1")
+    do_docs = (include_docs == "1")
 
-    for n in notes:
-        note_doc_id = doc_selected if doc_selected is not None else (n.get("document_id") or None)
-        pairs = extract_qa_pairs(n.get("body") or "")
-        for q, a in pairs:
-            cid, is_new = create_study_card(q, a, document_id=note_doc_id, note_id=n.get("id"))
-            if cid is None:
+    created_notes = 0
+    skipped_notes = 0
+    created_docs = 0
+    skipped_docs = 0
+    empty_docs = 0
+
+    # --- Notes -> cards ---
+    if do_notes:
+        notes = list_notes(limit=500, document_id=doc_selected)
+        for n in notes:
+            note_doc_id = doc_selected if doc_selected is not None else (n.get("document_id") or None)
+            pairs = extract_qa_pairs(n.get("body") or "")
+            for q, a in pairs:
+                cid, is_new = create_study_card(q, a, document_id=note_doc_id, note_id=n.get("id"))
+                if cid is None:
+                    continue
+                if is_new:
+                    created_notes += 1
+                else:
+                    skipped_notes += 1
+
+    # --- Document search_text -> cards ---
+    if do_docs:
+        if doc_selected is not None:
+            docs_to_use = [get_document(doc_selected)]
+        else:
+            # Safety limit: avoid generating a massive deck by accident
+            docs_to_use = list_documents()[:8]
+
+        for d in docs_to_use:
+            if not d:
                 continue
-            if is_new:
-                created += 1
-            else:
-                skipped += 1
+            body = (d.get("search_text") or "").strip()
+            if not body:
+                empty_docs += 1
+                continue
 
-    msg = f"✅ Kártyák generálva: {created} | duplikátum kihagyva: {skipped}"
+            # Keep generation bounded
+            pairs = extract_qa_pairs(body)[:300]
+            for q, a in pairs:
+                cid, is_new = create_study_card(q, a, document_id=int(d["id"]), note_id=None)
+                if cid is None:
+                    continue
+                if is_new:
+                    created_docs += 1
+                else:
+                    skipped_docs += 1
+
+    parts = []
+    if do_notes:
+        parts.append(f"📝 notes: +{created_notes} | dup: {skipped_notes}")
+    if do_docs:
+        parts.append(f"📄 docs: +{created_docs} | dup: {skipped_docs} | no-text: {empty_docs}")
+
+    if not parts:
+        msg = "⚠️ Semmi nem történt (legalább egy forrást jelölj be)."
+    else:
+        msg = "✅ Kártyák generálva — " + " | ".join(parts)
+
     return RedirectResponse(url=f"/study?msg={quote_plus(msg)}", status_code=303)
 
 
@@ -1164,20 +1217,34 @@ def study_card_delete_post(request: Request, card_id: int):
 
 
 @app.get("/study/session", response_class=HTMLResponse)
-def study_session(request: Request, doc: str = "", show: int = 0, card_id: int = 0):
+def study_session(request: Request, doc: str = "", show: int = 0, card_id: int = 0, practice: int = 0):
     doc_selected = _parse_int_or_none(doc)
     show_int = int(show or 0)
+    practice_int = int(practice or 0)
 
-    practice = 0
     card = None
+
+    # If we are revealing a card, keep the practice flag from the query param
     if show_int == 1 and int(card_id) > 0:
         card = get_study_card(int(card_id))
-    if not card:
-        card = get_next_due_card(doc_selected)
+        ctx = {
+            "request": request,
+            "docs": list_documents(),
+            "doc_selected": doc_selected,
+            "show": show_int,
+            "card": card,
+            "practice": practice_int,
+        }
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("study_session.html", ctx)
 
+    # Otherwise pick the next due
+    card = get_next_due_card(doc_selected)
+
+    # No due -> practice mode (random)
     if not card:
         card = get_random_card(doc_selected)
-        practice = 1 if card else 0
+        practice_int = 1 if card else 0
 
     ctx = {
         "request": request,
@@ -1185,10 +1252,14 @@ def study_session(request: Request, doc: str = "", show: int = 0, card_id: int =
         "doc_selected": doc_selected,
         "show": show_int,
         "card": card,
-        "practice": 0,
+        "practice": practice_int,
     }
     ctx.update(_settings_context())
     return templates.TemplateResponse("study_session.html", ctx)
+
+
+@app.post("/study/review")
+
 
 
 @app.post("/study/review")
@@ -1210,6 +1281,7 @@ def study_review(
 def study_quiz(request: Request, doc: str = ""):
     doc_selected = _parse_int_or_none(doc)
     practice = 0
+
     card = get_next_due_card(doc_selected)
     if not card:
         card = get_random_card(doc_selected)
@@ -1219,7 +1291,6 @@ def study_quiz(request: Request, doc: str = ""):
     if card:
         distractors = get_random_distractors(exclude_card_id=int(card["id"]), document_id=doc_selected, k=3)
         options = [card["answer"], *distractors]
-        # shuffle options
         random.shuffle(options)
 
     ctx = {
@@ -1227,7 +1298,7 @@ def study_quiz(request: Request, doc: str = ""):
         "docs": list_documents(),
         "doc_selected": doc_selected,
         "card": card,
-        "practice": 0,
+        "practice": practice,
         "answered": 0,
         "options": options,
         "picked": "",
@@ -1243,6 +1314,7 @@ def study_quiz_answer(
     card_id: int = Form(...),
     picked: str = Form(""),
     doc: str = Form(""),
+    practice: int = Form(0),
 ):
     doc_selected = _parse_int_or_none(doc)
     card = get_study_card(int(card_id))
@@ -1258,7 +1330,7 @@ def study_quiz_answer(
         "docs": list_documents(),
         "doc_selected": doc_selected,
         "card": card,
-        "practice": 0,
+        "practice": int(practice or 0),
         "answered": 1,
         "options": [],
         "picked": picked2,
@@ -1266,6 +1338,10 @@ def study_quiz_answer(
     }
     ctx.update(_settings_context())
     return templates.TemplateResponse("study_quiz.html", ctx)
+
+
+@app.get("/study/stats", response_class=HTMLResponse)
+
 
 
 @app.get("/study/stats", response_class=HTMLResponse)

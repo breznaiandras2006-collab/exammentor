@@ -56,7 +56,7 @@
       </form>
     {% else %}
       <div class="actions">
-        <a class="buttonlike" href="/study/session?show=1&card_id={{ card.id }}{% if doc_selected %}&doc={{ doc_selected }}{% endif %}">👀 Mutasd a választ</a>
+        <a class="buttonlike" href="/study/session?show=1&card_id={{ card.id }}&practice={{ practice }}{% if doc_selected %}&doc={{ doc_selected }}{% endif %}">👀 Mutasd a választ</a>
       </div>
     {% endif %}
   </div>
