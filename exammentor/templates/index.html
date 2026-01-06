@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1>ExamMentor</h1>
+
+<div class="card">
+  <h2>Áttekintés</h2>
+  <ul>
+    <li>UI language: <b>{{ s.ui_lang }}</b></li>
+    <li>Answer language: <b>{{ s.answer_language }}</b></li>
+    <li>Theme: <b>{{ s.theme }}</b></li>
+  </ul>
+
+  <p class="muted">
+    Navigáció: Documents / Notes / Ask / PDF Tools / Settings
+  </p>
+</div>
+
+{% endblock %}

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>✅ Ask eredmény</h1>
+
+<div class="card">
+  <h2>Kérdés</h2>
+  <div class="muted">{{ question }}</div>
+</div>
+
+<div class="card">
+  <h2>Összegzett “válasz” (v1)</h2>
+  <pre style="white-space: pre-wrap; margin:0;">{{ answer }}</pre>
+  <p class="muted">Tipp: később (C3 környékén) ezt kiválthatjuk valódi AI-összegzéssel.</p>
+</div>
+
+<div class="card">
+  <h2>Találatok</h2>
+
+  {% if not results %}
+    <p class="muted">Nincs találat.</p>
+  {% else %}
+    <ol>
+      {% for r in results %}
+        <li style="margin: 10px 0;">
+          <div>
+            <b>{{ r.doc_title }}</b>
+            <span class="muted">— p. {{ r.page_start }}-{{ r.page_end }} — score: {{ "%.1f"|format(r.score) }}</span>
+          </div>
+          <div class="muted" style="margin-top:6px;">{{ r.preview_hl | safe }}</div>
+        </li>
+      {% endfor %}
+    </ol>
+  {% endif %}
+</div>
+
+<div class="card">
+  <a href="/ask">↩️ Új kérdés</a>
+</div>
+
+{% endblock %}

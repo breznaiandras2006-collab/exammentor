@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{% if mode=="edit" %}✏️ Edit note{% else %}➕ New note{% endif %}</h1>
+
+<div class="card">
+  <form method="post" action="{% if mode=='edit' %}/notes/{{ note.id }}/edit{% else %}/notes/new{% endif %}">
+    <label class="muted">Title</label>
+    <input class="input" name="title" value="{{ note.title }}" placeholder="pl. Big Five vs HEXACO" />
+
+    <label class="muted">Kapcsolt dokumentum (opcionális)</label>
+    <select name="document_id">
+      <option value="">(nincs)</option>
+      {% for d in docs %}
+        <option value="{{ d.id }}" {% if note.document_id==d.id %}selected{% endif %}>
+          #{{ d.id }} — {{ d.title }}
+        </option>
+      {% endfor %}
+    </select>
+
+    <label class="muted">Body</label>
+    <textarea class="input" name="body" rows="12" placeholder="Írd ide a jegyzetet...">{{ note.body }}</textarea>
+
+    <div class="actions">
+      <button type="submit">💾 Save</button>
+      <a class="buttonlike" href="/notes">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

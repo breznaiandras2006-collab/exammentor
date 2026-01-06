@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1 class="page-title">📄 {{ doc.title or "Document" }}</h1>
+
+<div class="card">
+  <ul class="meta">
+    <li><b>File:</b> {{ doc.original_name or doc.stored_name }}</li>
+    <li><b>Pages:</b> {{ doc.pages or "?" }}</li>
+    <li><b>Language:</b> {{ doc.language or "auto" }}</li>
+    <li><b>Type:</b> {{ doc.type or "pdf" }}</li>
+  </ul>
+
+  <div style="display:flex; gap:12px; flex-wrap:wrap;">
+    <a class="btn" href="/documents/{{ doc.id }}/file" target="_blank" rel="noopener">🗂 Open in new tab</a>
+    <a class="btn btn-secondary" href="/documents/{{ doc.id }}/download">⬇ Download</a>
+  </div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">Megnyitás a programban</h2>
+
+  {% if doc.type == "pdf" %}
+    <iframe
+      src="/documents/{{ doc.id }}/file"
+      style="width:100%; height:72vh; border:1px solid rgba(255,255,255,0.08); border-radius:12px;"
+      loading="lazy">
+    </iframe>
+
+    <p class="muted" style="margin-top:10px;">
+      Ha Opera/AdBlock “ERR_BLOCKED_BY_CLIENT”-et dob, kapcsold ki a beépített blokkolót erre az oldalra.
+    </p>
+  {% else %}
+    <p class="muted">Ehhez a típushoz még nincs beépített nézegető.</p>
+  {% endif %}
+</div>
+
+{% endblock %}

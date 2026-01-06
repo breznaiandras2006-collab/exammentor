@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>📝 Notes</h1>
+
+<div class="card">
+  <form method="get" action="/notes">
+    <label class="muted">Dokumentum szűrés</label>
+    <select name="doc">
+      <option value="">(összes)</option>
+      {% for d in docs %}
+        <option value="{{ d.id }}" {% if doc_selected==d.id %}selected{% endif %}>
+          #{{ d.id }} — {{ d.title }}
+        </option>
+      {% endfor %}
+    </select>
+    <div class="actions">
+      <button type="submit">Szűrés</button>
+      <a class="buttonlike" href="/notes/new{% if doc_selected %}?doc={{ doc_selected }}{% endif %}">➕ Új jegyzet</a>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Jegyzeteid</h2>
+  {% if notes %}
+    <ul>
+      {% for n in notes %}
+        <li>
+          <a href="/notes/{{ n.id }}">{{ n.title }}</a>
+          <span class="muted">
+            {% if n.document_id %} (doc #{{ n.document_id }}){% endif %}
+          </span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">Még nincs jegyzet.</p>
+  {% endif %}
+</div>
+{% endblock %}

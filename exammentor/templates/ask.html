@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>🔎 Ask</h1>
+
+<div class="card">
+  <form method="post" action="/ask">
+    <label class="muted">Keresőkifejezés</label>
+    <input class="input" type="text" name="q" value="{{ q }}" placeholder="pl. csoportszelekció" required />
+
+    <div class="row" style="display:flex; gap:12px; flex-wrap:wrap;">
+      <div style="flex:1; min-width:220px;">
+        <label class="muted">Scope</label>
+        <select name="scope" class="input">
+          <option value="all" {% if scope=="all" %}selected{% endif %}>Minden</option>
+          <option value="notes" {% if scope=="notes" %}selected{% endif %}>Csak Notes</option>
+          <option value="docs" {% if scope=="docs" %}selected{% endif %}>Csak PDF</option>
+        </select>
+      </div>
+
+      <div style="flex:1; min-width:220px;">
+        <label class="muted">Notes szűrés dokumentumra (opcionális)</label>
+        <select name="doc" class="input">
+          <option value="" {% if not doc_selected %}selected{% endif %}>Összes</option>
+          {% for d in docs %}
+            <option value="{{ d.id }}" {% if doc_selected==d.id %}selected{% endif %}>
+              #{{ d.id }} — {{ d.title }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button type="submit">Keresés</button>
+      <a class="buttonlike" href="/ask">Ürítés</a>
+    </div>
+  </form>
+</div>
+
+{% if q %}
+  <div class="card">
+    <h2>📌 Összefoglaló (preview)</h2>
+
+    {% if compiled_answer %}
+      <pre style="white-space: pre-wrap; margin:0">{{ compiled_answer }}</pre>
+
+      <form method="post" action="/ask/save-note" style="margin-top:10px;">
+        <input type="hidden" name="title" value="Ask: {{ q }}">
+        <input type="hidden" name="body" value="{{ compiled_answer }}">
+        <input type="hidden" name="document_id" value="">
+        <button type="submit">💾 Mentés jegyzetként</button>
+      </form>
+    {% else %}
+      <p class="muted">Nincs találat.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>📝 Notes találatok</h2>
+    {% if results_notes and results_notes|length > 0 %}
+      <ul class="list">
+        {% for n in results_notes %}
+          <li>
+            <a href="/notes/{{ n.id }}"><b>{{ n.title }}</b></a>
+            <div class="muted">{{ n.snippet or (n.body[:220] ~ ("…" if n.body|length>220 else "")) }}</div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted">Nincs notes találat.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>📄 PDF találatok</h2>
+    {% if results_docs and results_docs|length > 0 %}
+      <ul class="list">
+        {% for d in results_docs %}
+          <li>
+            <a href="/documents/{{ d.id }}"><b>#{{ d.id }} — {{ d.title }}</b></a>
+            <span class="muted">— {{ d.pages or "?" }} oldal</span>
+            <div class="muted">{{ d.snippet or "" }}</div>
+
+            <div style="margin-top:8px; display:flex; gap:10px; flex-wrap:wrap;">
+              <a class="buttonlike" href="/documents/{{ d.id }}/file" target="_blank" rel="noopener">Open</a>
+              <a class="buttonlike" href="/documents/{{ d.id }}/download">Download</a>
+
+              <form method="post" action="/ask/save-note" style="display:inline;">
+                <input type="hidden" name="title" value="{{ d.title }} — {{ q }}">
+                <input type="hidden" name="body" value="{{ d.snippet or '' }}">
+                <input type="hidden" name="document_id" value="{{ d.id }}">
+                <button type="submit">📝 Mentés jegyzetként</button>
+              </form>
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted">Nincs PDF találat (ha scanned PDF, OCR majd később).</p>
+    {% endif %}
+  </div>
+{% else %}
+  <p class="muted">Írj be egy kifejezést és keress.</p>
+{% endif %}
+
+{% endblock %}

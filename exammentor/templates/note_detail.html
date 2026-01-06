@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ note.title }}</h1>
+
+<div class="card">
+  {% if doc %}
+    <p class="muted">Kapcsolt dokumentum: <a href="/documents/{{ doc.id }}">#{{ doc.id }} — {{ doc.title }}</a></p>
+  {% endif %}
+
+  <div class="actions">
+    <a class="buttonlike" href="/notes/{{ note.id }}/edit">✏️ Edit</a>
+    <a class="buttonlike" href="/notes/{{ note.id }}/export/docx">⬇️ Export DOCX</a>
+    <a class="buttonlike" href="/notes/{{ note.id }}/export/pdf">⬇️ Export PDF</a>
+    <form method="post" action="/notes/{{ note.id }}/delete" style="display:inline;">
+      <button type="submit" onclick="return confirm('Biztos törlöd?')">🗑️ Delete</button>
+    </form>
+    <a class="buttonlike" href="/notes">Back</a>
+  </div>
+</div>
+
+<div class="card">
+  <pre style="white-space: pre-wrap; margin:0;">{{ note.body }}</pre>
+</div>
+{% endblock %}
