@@ -44,3 +44,8 @@ git add .
 git commit -m "Update: <short message>"
 git push
 ```
+
+## PDF Tools v2 notes
+- Better validation (no more 500 on bad page ranges)
+- Field values persist after submit
+- Quick buttons: `1..N`, `N..1`, `Törlés` (auto-fill based on selected document's page count)

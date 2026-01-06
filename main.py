@@ -576,31 +576,54 @@ def settings_save(
 
 
 # ---------------- PDF Tools (B modul) ----------------
-@app.get("/pdf-tools", response_class=HTMLResponse)
-def pdf_tools_page(request: Request):
+def _render_pdf_tools(
+    request: Request,
+    *,
+    status_code: int = 200,
+    result: str | None = None,
+    result_kind: str = "info",  # info|success|warn|error
+    created_docs: list | None = None,
+    form: dict | None = None,
+):
+    """Consistent PDF Tools page rendering with basic UX feedback."""
     ctx = {
         "request": request,
         "docs": list_documents(),
-        "result": None,
-        "created_docs": [],
+        "result": result,
+        "result_kind": result_kind,
+        "created_docs": created_docs or [],
+        "form": form or {},
     }
     ctx.update(_settings_context())
-    return templates.TemplateResponse("pdf_tools.html", ctx)
+    return templates.TemplateResponse("pdf_tools.html", ctx, status_code=status_code)
+
+
+@app.get("/pdf-tools", response_class=HTMLResponse)
+def pdf_tools_page(request: Request):
+    return _render_pdf_tools(request)
 
 
 @app.post("/pdf-tools/compress", response_class=HTMLResponse)
 def pdf_tools_compress(request: Request, doc_id: int = Form(...)):
     doc = get_document(doc_id)
     if not doc:
-        ctx = {"request": request, "docs": list_documents(), "result": "❌ Document not found", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+        return _render_pdf_tools(
+            request,
+            status_code=404,
+            result="❌ Nem találom ezt a dokumentumot.",
+            result_kind="error",
+            form={"compress_doc_id": doc_id},
+        )
 
     fp = UPLOAD_DIR / (doc.get("stored_name") or "")
     if not fp.exists():
-        ctx = {"request": request, "docs": list_documents(), "result": "❌ File missing", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+        return _render_pdf_tools(
+            request,
+            status_code=404,
+            result="❌ A PDF fájl nem található a szerveren (hiányzó uploads fájl).",
+            result_kind="error",
+            form={"compress_doc_id": doc_id},
+        )
 
     data = fp.read_bytes()
     out = compress_pdf_bytes(data)
@@ -610,40 +633,55 @@ def pdf_tools_compress(request: Request, doc_id: int = Form(...)):
     new_id = _store_pdf_bytes_as_document(out, title=title_out, original_name=original_out, language=doc.get("language") or "auto")
 
     new_doc = get_document(new_id)
-    ctx = {
-        "request": request,
-        "docs": list_documents(),
-        "result": "✅ Compressed PDF created.",
-        "created_docs": [new_doc] if new_doc else [],
-    }
-    ctx.update(_settings_context())
-    return templates.TemplateResponse("pdf_tools.html", ctx)
+    return _render_pdf_tools(
+        request,
+        result="✅ Tömörített PDF elkészült.",
+        result_kind="success",
+        created_docs=[new_doc] if new_doc else [],
+        form={"compress_doc_id": doc_id},
+    )
 
 
 @app.post("/pdf-tools/split", response_class=HTMLResponse)
 def pdf_tools_split(request: Request, doc_id: int = Form(...), ranges_text: str = Form("")):
     doc = get_document(doc_id)
     if not doc:
-        ctx = {"request": request, "docs": list_documents(), "result": "❌ Document not found", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+        return _render_pdf_tools(
+            request,
+            status_code=404,
+            result="❌ Nem találom ezt a dokumentumot.",
+            result_kind="error",
+            form={"split_doc_id": doc_id, "split_ranges_text": ranges_text},
+        )
 
     fp = UPLOAD_DIR / (doc.get("stored_name") or "")
     if not fp.exists():
-        ctx = {"request": request, "docs": list_documents(), "result": "❌ File missing", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+        return _render_pdf_tools(
+            request,
+            status_code=404,
+            result="❌ A PDF fájl nem található a szerveren (hiányzó uploads fájl).",
+            result_kind="error",
+            form={"split_doc_id": doc_id, "split_ranges_text": ranges_text},
+        )
 
-    ranges = parse_ranges(ranges_text)
+    try:
+        ranges = parse_ranges(ranges_text)
+    except Exception as e:
+        return _render_pdf_tools(
+            request,
+            status_code=400,
+            result=f"⚠️ Hibás tartomány. Példa: 1-3, 5, 8-10. Részlet: {e}",
+            result_kind="warn",
+            form={"split_doc_id": doc_id, "split_ranges_text": ranges_text},
+        )
     if not ranges:
-        ctx = {
-            "request": request,
-            "docs": list_documents(),
-            "result": "⚠️ Adj meg oldaltartományt pl: 1-2, 3-5",
-            "created_docs": [],
-        }
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+        return _render_pdf_tools(
+            request,
+            status_code=400,
+            result="⚠️ Adj meg oldaltartományt (példa: 1-2, 4 vagy 1-3;5).",
+            result_kind="warn",
+            form={"split_doc_id": doc_id, "split_ranges_text": ranges_text},
+        )
 
     data = fp.read_bytes()
     parts = split_pdf_bytes(data, ranges)
@@ -658,28 +696,30 @@ def pdf_tools_split(request: Request, doc_id: int = Form(...), ranges_text: str 
         if nd:
             created.append(nd)
 
-    ctx = {
-        "request": request,
-        "docs": list_documents(),
-        "result": f"✅ Split created: {len(created)} part(s).",
-        "created_docs": created,
-    }
-    ctx.update(_settings_context())
-    return templates.TemplateResponse("pdf_tools.html", ctx)
+    msg = f"✅ Split kész: {len(created)} rész."
+    kind = "success" if created else "warn"
+    if not created:
+        msg = "⚠️ Nem jött létre rész PDF (ellenőrizd az oldaltartományt)."
+    return _render_pdf_tools(
+        request,
+        result=msg,
+        result_kind=kind,
+        created_docs=created,
+        form={"split_doc_id": doc_id, "split_ranges_text": ranges_text},
+    )
 
 
 @app.post("/pdf-tools/merge", response_class=HTMLResponse)
 def pdf_tools_merge(request: Request, doc_ids_text: str = Form("")):
     ids = _parse_doc_ids(doc_ids_text)
     if len(ids) < 2:
-        ctx = {
-            "request": request,
-            "docs": list_documents(),
-            "result": "⚠️ Adj meg legalább 2 doc ID-t: 1,2",
-            "created_docs": [],
-        }
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+        return _render_pdf_tools(
+            request,
+            status_code=400,
+            result="⚠️ Adj meg legalább 2 doc ID-t (példa: 1,2).",
+            result_kind="warn",
+            form={"merge_doc_ids_text": doc_ids_text},
+        )
 
     pdf_list = []
     titles = []
@@ -697,14 +737,13 @@ def pdf_tools_merge(request: Request, doc_ids_text: str = Form("")):
         lang = doc.get("language") or lang
 
     if len(pdf_list) < 2:
-        ctx = {
-            "request": request,
-            "docs": list_documents(),
-            "result": "❌ Nem találtam legalább 2 érvényes PDF-et a megadott ID-khez.",
-            "created_docs": [],
-        }
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+        return _render_pdf_tools(
+            request,
+            status_code=404,
+            result="❌ Nem találtam legalább 2 érvényes PDF-et a megadott ID-khez.",
+            result_kind="error",
+            form={"merge_doc_ids_text": doc_ids_text},
+        )
 
     out = merge_pdf_bytes(pdf_list)
     out_original = f"merged_{'_'.join(str(i) for i in ids)}.pdf"
@@ -713,35 +752,55 @@ def pdf_tools_merge(request: Request, doc_ids_text: str = Form("")):
     new_id = _store_pdf_bytes_as_document(out, title=out_title, original_name=out_original, language=lang)
     new_doc = get_document(new_id)
 
-    ctx = {
-        "request": request,
-        "docs": list_documents(),
-        "result": "✅ Merged PDF created.",
-        "created_docs": [new_doc] if new_doc else [],
-    }
-    ctx.update(_settings_context())
-    return templates.TemplateResponse("pdf_tools.html", ctx)
+    return _render_pdf_tools(
+        request,
+        result="✅ Összefűzött PDF elkészült.",
+        result_kind="success",
+        created_docs=[new_doc] if new_doc else [],
+        form={"merge_doc_ids_text": doc_ids_text},
+    )
 
 
 @app.post("/pdf-tools/delete-pages", response_class=HTMLResponse)
 def pdf_tools_delete_pages(request: Request, doc_id: int = Form(...), ranges_text: str = Form("")):
     doc = get_document(doc_id)
     if not doc:
-        ctx = {"request": request, "docs": list_documents(), "result": "❌ Document not found", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+        return _render_pdf_tools(
+            request,
+            status_code=404,
+            result="❌ Nem találom ezt a dokumentumot.",
+            result_kind="error",
+            form={"delete_doc_id": doc_id, "delete_ranges_text": ranges_text},
+        )
 
-    ranges = parse_ranges(ranges_text)
+    try:
+        ranges = parse_ranges(ranges_text)
+    except Exception as e:
+        return _render_pdf_tools(
+            request,
+            status_code=400,
+            result=f"⚠️ Hibás tartomány. Példa: 1-2, 4. Részlet: {e}",
+            result_kind="warn",
+            form={"delete_doc_id": doc_id, "delete_ranges_text": ranges_text},
+        )
     if not ranges:
-        ctx = {"request": request, "docs": list_documents(), "result": "⚠️ Adj meg oldaltartományt pl: 1-2, 4", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+        return _render_pdf_tools(
+            request,
+            status_code=400,
+            result="⚠️ Adj meg oldaltartományt (példa: 1-2, 4).",
+            result_kind="warn",
+            form={"delete_doc_id": doc_id, "delete_ranges_text": ranges_text},
+        )
 
     fp = UPLOAD_DIR / (doc.get("stored_name") or "")
     if not fp.exists():
-        ctx = {"request": request, "docs": list_documents(), "result": "❌ File missing", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+        return _render_pdf_tools(
+            request,
+            status_code=404,
+            result="❌ A PDF fájl nem található a szerveren (hiányzó uploads fájl).",
+            result_kind="error",
+            form={"delete_doc_id": doc_id, "delete_ranges_text": ranges_text},
+        )
 
     out = delete_pages_pdf_bytes(fp.read_bytes(), ranges)
     out_original = f"pages_removed_{doc.get('original_name','document.pdf')}"
@@ -750,37 +809,66 @@ def pdf_tools_delete_pages(request: Request, doc_id: int = Form(...), ranges_tex
     new_id = _store_pdf_bytes_as_document(out, title=out_title, original_name=out_original, language=doc.get("language") or "auto")
     new_doc = get_document(new_id)
 
-    ctx = {"request": request, "docs": list_documents(), "result": "✅ Pages removed (new document created).", "created_docs": [new_doc] if new_doc else []}
-    ctx.update(_settings_context())
-    return templates.TemplateResponse("pdf_tools.html", ctx)
+    return _render_pdf_tools(
+        request,
+        result="✅ Oldalak törölve (új dokumentum készült).",
+        result_kind="success",
+        created_docs=[new_doc] if new_doc else [],
+        form={"delete_doc_id": doc_id, "delete_ranges_text": ranges_text},
+    )
 
 
 @app.post("/pdf-tools/rotate", response_class=HTMLResponse)
 def pdf_tools_rotate(request: Request, doc_id: int = Form(...), ranges_text: str = Form(""), degrees: int = Form(90)):
     doc = get_document(doc_id)
     if not doc:
-        ctx = {"request": request, "docs": list_documents(), "result": "❌ Document not found", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+        return _render_pdf_tools(
+            request,
+            status_code=404,
+            result="❌ Nem találom ezt a dokumentumot.",
+            result_kind="error",
+            form={"rotate_doc_id": doc_id, "rotate_ranges_text": ranges_text, "rotate_degrees": degrees},
+        )
 
-    ranges = parse_ranges(ranges_text)
+    try:
+        ranges = parse_ranges(ranges_text)
+    except Exception as e:
+        return _render_pdf_tools(
+            request,
+            status_code=400,
+            result=f"⚠️ Hibás tartomány. Példa: 1-2, 4. Részlet: {e}",
+            result_kind="warn",
+            form={"rotate_doc_id": doc_id, "rotate_ranges_text": ranges_text, "rotate_degrees": degrees},
+        )
     if not ranges:
-        ctx = {"request": request, "docs": list_documents(), "result": "⚠️ Adj meg oldaltartományt pl: 1-2, 4", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+        return _render_pdf_tools(
+            request,
+            status_code=400,
+            result="⚠️ Adj meg oldaltartományt (példa: 1-2, 4).",
+            result_kind="warn",
+            form={"rotate_doc_id": doc_id, "rotate_ranges_text": ranges_text, "rotate_degrees": degrees},
+        )
 
     fp = UPLOAD_DIR / (doc.get("stored_name") or "")
     if not fp.exists():
-        ctx = {"request": request, "docs": list_documents(), "result": "❌ File missing", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+        return _render_pdf_tools(
+            request,
+            status_code=404,
+            result="❌ A PDF fájl nem található a szerveren (hiányzó uploads fájl).",
+            result_kind="error",
+            form={"rotate_doc_id": doc_id, "rotate_ranges_text": ranges_text, "rotate_degrees": degrees},
+        )
 
     try:
         out = rotate_pages_pdf_bytes(fp.read_bytes(), ranges, int(degrees))
     except Exception:
-        ctx = {"request": request, "docs": list_documents(), "result": "⚠️ A forgatás fokszáma 90/180/270 legyen.", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+        return _render_pdf_tools(
+            request,
+            status_code=400,
+            result="⚠️ A forgatás fokszáma 90/180/270 legyen.",
+            result_kind="warn",
+            form={"rotate_doc_id": doc_id, "rotate_ranges_text": ranges_text, "rotate_degrees": degrees},
+        )
 
     out_original = f"rotated_{degrees}_{doc.get('original_name','document.pdf')}"
     out_title = f"Rotated {degrees}° — {doc.get('title') or doc.get('original_name','PDF')}"
@@ -788,9 +876,13 @@ def pdf_tools_rotate(request: Request, doc_id: int = Form(...), ranges_text: str
     new_id = _store_pdf_bytes_as_document(out, title=out_title, original_name=out_original, language=doc.get("language") or "auto")
     new_doc = get_document(new_id)
 
-    ctx = {"request": request, "docs": list_documents(), "result": "✅ Rotated (new document created).", "created_docs": [new_doc] if new_doc else []}
-    ctx.update(_settings_context())
-    return templates.TemplateResponse("pdf_tools.html", ctx)
+    return _render_pdf_tools(
+        request,
+        result=f"✅ Forgatás kész ({degrees}°) — új dokumentum készült.",
+        result_kind="success",
+        created_docs=[new_doc] if new_doc else [],
+        form={"rotate_doc_id": doc_id, "rotate_ranges_text": ranges_text, "rotate_degrees": degrees},
+    )
 
 
 
@@ -799,55 +891,89 @@ def pdf_tools_rotate(request: Request, doc_id: int = Form(...), ranges_text: str
 def pdf_tools_extract_pages(request: Request, doc_id: int = Form(...), ranges_text: str = Form("")):
     doc = get_document(doc_id)
     if not doc:
-        ctx = {"request": request, "docs": list_documents(), "result": "❌ Document not found", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+        return _render_pdf_tools(
+            request,
+            status_code=404,
+            result="❌ Nem találom ezt a dokumentumot.",
+            result_kind="error",
+            form={"extract_doc_id": doc_id, "extract_ranges_text": ranges_text},
+        )
 
     try:
         ranges = parse_ranges(ranges_text)
-    except Exception:
-        ranges = []
+    except Exception as e:
+        return _render_pdf_tools(
+            request,
+            status_code=400,
+            result=f"⚠️ Hibás tartomány. Példa: 1-2, 4. Részlet: {e}",
+            result_kind="warn",
+            form={"extract_doc_id": doc_id, "extract_ranges_text": ranges_text},
+        )
     if not ranges:
-        ctx = {"request": request, "docs": list_documents(), "result": "⚠️ Adj meg oldaltartományt pl: 1-2, 4", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+        return _render_pdf_tools(
+            request,
+            status_code=400,
+            result="⚠️ Adj meg oldaltartományt (példa: 1-2, 4).",
+            result_kind="warn",
+            form={"extract_doc_id": doc_id, "extract_ranges_text": ranges_text},
+        )
 
     fp = UPLOAD_DIR / (doc.get("stored_name") or "")
     if not fp.exists():
-        ctx = {"request": request, "docs": list_documents(), "result": "❌ File missing", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+        return _render_pdf_tools(
+            request,
+            status_code=404,
+            result="❌ A PDF fájl nem található a szerveren (hiányzó uploads fájl).",
+            result_kind="error",
+            form={"extract_doc_id": doc_id, "extract_ranges_text": ranges_text},
+        )
 
     try:
         out = extract_pages_pdf_bytes(fp.read_bytes(), ranges)
     except Exception as e:
-        ctx = {"request": request, "docs": list_documents(), "result": f"❌ Extract failed: {e}", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+        return _render_pdf_tools(
+            request,
+            status_code=400,
+            result=f"❌ Extract nem sikerült: {e}",
+            result_kind="error",
+            form={"extract_doc_id": doc_id, "extract_ranges_text": ranges_text},
+        )
 
     original_out = f"extract_{doc.get('original_name','document.pdf')}"
     title_out = f"Extract — {doc.get('title') or doc.get('original_name','PDF')}"
     new_id = _store_pdf_bytes_as_document(out, title=title_out, original_name=original_out, language=doc.get("language") or "auto")
     new_doc = get_document(new_id)
 
-    ctx = {"request": request, "docs": list_documents(), "result": "✅ Extracted PDF created.", "created_docs": [new_doc] if new_doc else []}
-    ctx.update(_settings_context())
-    return templates.TemplateResponse("pdf_tools.html", ctx)
+    return _render_pdf_tools(
+        request,
+        result="✅ Kivágott (extract) PDF elkészült.",
+        result_kind="success",
+        created_docs=[new_doc] if new_doc else [],
+        form={"extract_doc_id": doc_id, "extract_ranges_text": ranges_text},
+    )
 
 
 @app.post("/pdf-tools/reorder", response_class=HTMLResponse)
 def pdf_tools_reorder(request: Request, doc_id: int = Form(...), sequence_text: str = Form("")):
     doc = get_document(doc_id)
     if not doc:
-        ctx = {"request": request, "docs": list_documents(), "result": "❌ Document not found", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+        return _render_pdf_tools(
+            request,
+            status_code=404,
+            result="❌ Nem találom ezt a dokumentumot.",
+            result_kind="error",
+            form={"reorder_doc_id": doc_id, "reorder_sequence_text": sequence_text},
+        )
 
     fp = UPLOAD_DIR / (doc.get("stored_name") or "")
     if not fp.exists():
-        ctx = {"request": request, "docs": list_documents(), "result": "❌ File missing", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+        return _render_pdf_tools(
+            request,
+            status_code=404,
+            result="❌ A PDF fájl nem található a szerveren (hiányzó uploads fájl).",
+            result_kind="error",
+            form={"reorder_doc_id": doc_id, "reorder_sequence_text": sequence_text},
+        )
 
     data = fp.read_bytes()
     total = 0
@@ -859,30 +985,46 @@ def pdf_tools_reorder(request: Request, doc_id: int = Form(...), sequence_text: 
     try:
         seq = parse_page_sequence(sequence_text, total_pages=total or 10**9)
     except Exception as e:
-        ctx = {"request": request, "docs": list_documents(), "result": f"⚠️ Hibás sorrend (példa: 3,1,2,5-7). {e}", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+        return _render_pdf_tools(
+            request,
+            status_code=400,
+            result=f"⚠️ Hibás sorrend (példa: 3,1,2,5-7). Részlet: {e}",
+            result_kind="warn",
+            form={"reorder_doc_id": doc_id, "reorder_sequence_text": sequence_text},
+        )
 
     if not seq:
-        ctx = {"request": request, "docs": list_documents(), "result": "⚠️ Adj meg oldalsorrendet (példa: 3,1,2,5-7).", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+        return _render_pdf_tools(
+            request,
+            status_code=400,
+            result="⚠️ Adj meg oldalsorrendet (példa: 3,1,2,5-7).",
+            result_kind="warn",
+            form={"reorder_doc_id": doc_id, "reorder_sequence_text": sequence_text},
+        )
 
     try:
         out = reorder_pages_pdf_bytes(data, seq)
     except Exception as e:
-        ctx = {"request": request, "docs": list_documents(), "result": f"❌ Reorder failed: {e}", "created_docs": []}
-        ctx.update(_settings_context())
-        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+        return _render_pdf_tools(
+            request,
+            status_code=400,
+            result=f"❌ Reorder nem sikerült: {e}",
+            result_kind="error",
+            form={"reorder_doc_id": doc_id, "reorder_sequence_text": sequence_text},
+        )
 
     original_out = f"reorder_{doc.get('original_name','document.pdf')}"
     title_out = f"Reorder — {doc.get('title') or doc.get('original_name','PDF')}"
     new_id = _store_pdf_bytes_as_document(out, title=title_out, original_name=original_out, language=doc.get("language") or "auto")
     new_doc = get_document(new_id)
 
-    ctx = {"request": request, "docs": list_documents(), "result": "✅ Reordered PDF created.", "created_docs": [new_doc] if new_doc else []}
-    ctx.update(_settings_context())
-    return templates.TemplateResponse("pdf_tools.html", ctx)
+    return _render_pdf_tools(
+        request,
+        result="✅ Reorder PDF elkészült.",
+        result_kind="success",
+        created_docs=[new_doc] if new_doc else [],
+        form={"reorder_doc_id": doc_id, "reorder_sequence_text": sequence_text},
+    )
 
 
 # ---------------- Study (C modul stub) ----------------

@@ -3,13 +3,20 @@
 <h1 class="page-title">🛠️ PDF Tools</h1>
 
 <div class="card">
+  <div class="muted">
+    <b>Gyors tipp:</b> tartomány formátum: <code>1-3, 5, 8-10</code> (a <code>;</code> is jó elválasztónak).<br/>
+    <b>Reorder:</b> új PDF-et készít a megadott sorrendben (kihagyás/duplikálás is lehetséges).
+  </div>
+</div>
+
+<div class="card">
   <h2 style="margin-top:0;">📦 Tömörítés</h2>
   <form method="post" action="/pdf-tools/compress">
     <label class="muted">Dokumentum</label>
-    <select class="input" name="doc_id" required>
+    <select class="input" name="doc_id" id="compress_doc_id" required>
       <option value="">— válassz —</option>
       {% for d in docs %}
-        <option value="{{ d.id }}">#{{ d.id }} — {{ d.title }} ({{ d.pages or d.page_count or "?" }} oldal)</option>
+        <option value="{{ d.id }}" data-pages="{{ d.pages or d.page_count or '' }}" {% if form.get('compress_doc_id')|string == d.id|string %}selected{% endif %}>#{{ d.id }} — {{ d.title }} ({{ d.pages or d.page_count or "?" }} oldal)</option>
       {% endfor %}
     </select>
     <div class="actions">
@@ -23,15 +30,19 @@
   <h2 style="margin-top:0;">✂️ Split (oldaltartományok)</h2>
   <form method="post" action="/pdf-tools/split">
     <label class="muted">Dokumentum</label>
-    <select class="input" name="doc_id" required>
+    <select class="input" name="doc_id" id="split_doc_id" required>
       <option value="">— válassz —</option>
       {% for d in docs %}
-        <option value="{{ d.id }}">#{{ d.id }} — {{ d.title }} ({{ d.pages or d.page_count or "?" }} oldal)</option>
+        <option value="{{ d.id }}" data-pages="{{ d.pages or d.page_count or '' }}" {% if form.get('split_doc_id')|string == d.id|string %}selected{% endif %}>#{{ d.id }} — {{ d.title }} ({{ d.pages or d.page_count or "?" }} oldal)</option>
       {% endfor %}
     </select>
 
     <label class="muted">Tartományok (példa: 1-3, 5, 8-10)</label>
-    <input class="input" name="ranges_text" placeholder="1-3, 5, 8-10" />
+    <div class="mini-actions">
+      <a class="buttonlike btn-small" href="#" onclick="fillAll('split_doc_id','split_ranges_text'); return false;">1..N</a>
+      <a class="buttonlike btn-small" href="#" onclick="clearField('split_ranges_text'); return false;">Törlés</a>
+    </div>
+    <input class="input" id="split_ranges_text" name="ranges_text" placeholder="1-3, 5, 8-10" value="{{ form.get('split_ranges_text','') }}" required />
 
     <div class="actions">
       <button type="submit">Split</button>
@@ -43,7 +54,7 @@
   <h2 style="margin-top:0;">🧩 Merge (több PDF összeillesztése)</h2>
   <form method="post" action="/pdf-tools/merge">
     <label class="muted">Doc ID-k (vesszővel elválasztva, sorrend számít)</label>
-    <input class="input" name="doc_ids_text" placeholder="1, 2, 3" />
+    <input class="input" name="doc_ids_text" placeholder="1, 2, 3" value="{{ form.get('merge_doc_ids_text','') }}" required />
     <div class="actions">
       <button type="submit">Merge</button>
     </div>
@@ -55,15 +66,19 @@
   <h2 style="margin-top:0;">🗑️ Oldalak törlése</h2>
   <form method="post" action="/pdf-tools/delete-pages">
     <label class="muted">Dokumentum</label>
-    <select class="input" name="doc_id" required>
+    <select class="input" name="doc_id" id="delete_doc_id" required>
       <option value="">— válassz —</option>
       {% for d in docs %}
-        <option value="{{ d.id }}">#{{ d.id }} — {{ d.title }} ({{ d.pages or d.page_count or "?" }} oldal)</option>
+        <option value="{{ d.id }}" data-pages="{{ d.pages or d.page_count or '' }}" {% if form.get('delete_doc_id')|string == d.id|string %}selected{% endif %}>#{{ d.id }} — {{ d.title }} ({{ d.pages or d.page_count or "?" }} oldal)</option>
       {% endfor %}
     </select>
 
     <label class="muted">Törlendő tartományok (példa: 1-2, 4)</label>
-    <input class="input" name="ranges_text" placeholder="1-2, 4" />
+    <div class="mini-actions">
+      <a class="buttonlike btn-small" href="#" onclick="fillAll('delete_doc_id','delete_ranges_text'); return false;">1..N</a>
+      <a class="buttonlike btn-small" href="#" onclick="clearField('delete_ranges_text'); return false;">Törlés</a>
+    </div>
+    <input class="input" id="delete_ranges_text" name="ranges_text" placeholder="1-2, 4" value="{{ form.get('delete_ranges_text','') }}" required />
 
     <div class="actions">
       <button type="submit">Delete pages</button>
@@ -75,21 +90,25 @@
   <h2 style="margin-top:0;">🔄 Forgatás</h2>
   <form method="post" action="/pdf-tools/rotate">
     <label class="muted">Dokumentum</label>
-    <select class="input" name="doc_id" required>
+    <select class="input" name="doc_id" id="rotate_doc_id" required>
       <option value="">— válassz —</option>
       {% for d in docs %}
-        <option value="{{ d.id }}">#{{ d.id }} — {{ d.title }} ({{ d.pages or d.page_count or "?" }} oldal)</option>
+        <option value="{{ d.id }}" data-pages="{{ d.pages or d.page_count or '' }}" {% if form.get('rotate_doc_id')|string == d.id|string %}selected{% endif %}>#{{ d.id }} — {{ d.title }} ({{ d.pages or d.page_count or "?" }} oldal)</option>
       {% endfor %}
     </select>
 
     <label class="muted">Tartományok (példa: 1-2, 4)</label>
-    <input class="input" name="ranges_text" placeholder="1-2, 4" />
+    <div class="mini-actions">
+      <a class="buttonlike btn-small" href="#" onclick="fillAll('rotate_doc_id','rotate_ranges_text'); return false;">1..N</a>
+      <a class="buttonlike btn-small" href="#" onclick="clearField('rotate_ranges_text'); return false;">Törlés</a>
+    </div>
+    <input class="input" id="rotate_ranges_text" name="ranges_text" placeholder="1-2, 4" value="{{ form.get('rotate_ranges_text','') }}" required />
 
     <label class="muted">Fok</label>
-    <select class="input" name="degrees">
-      <option value="90">90°</option>
-      <option value="180">180°</option>
-      <option value="270">270°</option>
+    <select class="input" name="degrees" id="rotate_degrees">
+      <option value="90" {% if (form.get('rotate_degrees')|string) == '90' %}selected{% endif %}>90°</option>
+      <option value="180" {% if (form.get('rotate_degrees')|string) == '180' %}selected{% endif %}>180°</option>
+      <option value="270" {% if (form.get('rotate_degrees')|string) == '270' %}selected{% endif %}>270°</option>
     </select>
 
     <div class="actions">
@@ -102,15 +121,19 @@
   <h2 style="margin-top:0;">📤 Oldalak kivágása (Extract)</h2>
   <form method="post" action="/pdf-tools/extract-pages">
     <label class="muted">Dokumentum</label>
-    <select class="input" name="doc_id" required>
+    <select class="input" name="doc_id" id="extract_doc_id" required>
       <option value="">— válassz —</option>
       {% for d in docs %}
-        <option value="{{ d.id }}">#{{ d.id }} — {{ d.title }} ({{ d.pages or d.page_count or "?" }} oldal)</option>
+        <option value="{{ d.id }}" data-pages="{{ d.pages or d.page_count or '' }}" {% if form.get('extract_doc_id')|string == d.id|string %}selected{% endif %}>#{{ d.id }} — {{ d.title }} ({{ d.pages or d.page_count or "?" }} oldal)</option>
       {% endfor %}
     </select>
 
     <label class="muted">Tartományok (példa: 1-2, 4)</label>
-    <input class="input" name="ranges_text" placeholder="1-2, 4" />
+    <div class="mini-actions">
+      <a class="buttonlike btn-small" href="#" onclick="fillAll('extract_doc_id','extract_ranges_text'); return false;">1..N</a>
+      <a class="buttonlike btn-small" href="#" onclick="clearField('extract_ranges_text'); return false;">Törlés</a>
+    </div>
+    <input class="input" id="extract_ranges_text" name="ranges_text" placeholder="1-2, 4" value="{{ form.get('extract_ranges_text','') }}" required />
 
     <div class="actions">
       <button type="submit">Extract</button>
@@ -123,26 +146,31 @@
   <h2 style="margin-top:0;">🔀 Oldalsorrend (Reorder)</h2>
   <form method="post" action="/pdf-tools/reorder">
     <label class="muted">Dokumentum</label>
-    <select class="input" name="doc_id" required>
+    <select class="input" name="doc_id" id="reorder_doc_id" required>
       <option value="">— válassz —</option>
       {% for d in docs %}
-        <option value="{{ d.id }}">#{{ d.id }} — {{ d.title }} ({{ d.pages or d.page_count or "?" }} oldal)</option>
+        <option value="{{ d.id }}" data-pages="{{ d.pages or d.page_count or '' }}" {% if form.get('reorder_doc_id')|string == d.id|string %}selected{% endif %}>#{{ d.id }} — {{ d.title }} ({{ d.pages or d.page_count or "?" }} oldal)</option>
       {% endfor %}
     </select>
 
     <label class="muted">Sorrend (példa: 3,1,2, 5-7)</label>
-    <input class="input" name="sequence_text" placeholder="3,1,2, 5-7" />
+    <div class="mini-actions">
+      <a class="buttonlike btn-small" href="#" onclick="fillAll('reorder_doc_id','reorder_sequence_text'); return false;">1..N</a>
+      <a class="buttonlike btn-small" href="#" onclick="fillReverse('reorder_doc_id','reorder_sequence_text'); return false;">N..1</a>
+      <a class="buttonlike btn-small" href="#" onclick="clearField('reorder_sequence_text'); return false;">Törlés</a>
+    </div>
+    <input class="input" id="reorder_sequence_text" name="sequence_text" placeholder="3,1,2, 5-7" value="{{ form.get('reorder_sequence_text','') }}" required />
 
     <div class="actions">
       <button type="submit">Reorder</button>
     </div>
-    <p class="muted">Tipp: duplikálás is mehet (pl. 1,1,2).</p>
+    <p class="muted">Tipp: lehet duplikálni (pl. <code>1,1,2</code>) vagy kihagyni oldalakat.</p>
   </form>
 </div>
 
 {% if result %}
-  <div class="card">
-    <b>✅ Info:</b>
+  <div class="card message {{ result_kind or 'info' }}">
+    <b>ℹ️ Üzenet</b>
     <div class="muted">{{ result }}</div>
   </div>
 {% endif %}
@@ -164,5 +192,50 @@
     </ul>
   </div>
 {% endif %}
+
+<script>
+function getSelectedPages(selectId){
+  const sel = document.getElementById(selectId);
+  if(!sel) return 0;
+  const opt = sel.selectedOptions && sel.selectedOptions[0];
+  const n = opt ? parseInt(opt.dataset.pages || "0", 10) : 0;
+  return isNaN(n) ? 0 : n;
+}
+
+function fillAll(selectId, inputId){
+  const n = getSelectedPages(selectId);
+  const el = document.getElementById(inputId);
+  if(!el) return;
+  if(!n){
+    el.value = "1-3";
+    alert("Válassz dokumentumot (oldalszám kell az auto kitöltéshez).\nMost példát írtam be: 1-3");
+    return;
+  }
+  el.value = `1-${n}`;
+  el.focus();
+}
+
+function fillReverse(selectId, inputId){
+  const n = getSelectedPages(selectId);
+  const el = document.getElementById(inputId);
+  if(!el) return;
+  if(!n){
+    el.value = "3,2,1";
+    alert("Válassz dokumentumot (oldalszám kell az auto kitöltéshez).\nMost példát írtam be: 3,2,1");
+    return;
+  }
+  const arr = [];
+  for(let i=n; i>=1; i--) arr.push(i);
+  el.value = arr.join(",");
+  el.focus();
+}
+
+function clearField(inputId){
+  const el = document.getElementById(inputId);
+  if(!el) return;
+  el.value = "";
+  el.focus();
+}
+</script>
 
 {% endblock %}
