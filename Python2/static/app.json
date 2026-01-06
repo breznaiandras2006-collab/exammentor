@@ -1,0 +1,24 @@
+async function toggleChunk(chunkId) {
+  const pre = document.getElementById(`chunk_${chunkId}`);
+  if (!pre) return;
+
+  if (pre.dataset.loaded !== "1") {
+    const res = await fetch(`/api/chunk/${chunkId}`);
+    const txt = await res.text();
+    pre.textContent = txt;
+    pre.dataset.loaded = "1";
+  }
+
+  pre.style.display = (pre.style.display === "none") ? "block" : "none";
+}
+
+async function copyChunk(chunkId) {
+  const res = await fetch(`/api/chunk/${chunkId}`);
+  const txt = await res.text();
+  try {
+    await navigator.clipboard.writeText(txt);
+    alert("✅ Kimásolva!");
+  } catch {
+    alert("❌ Clipboard hiba (böngésző engedély).");
+  }
+}

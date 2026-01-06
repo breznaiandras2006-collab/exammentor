@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>📊 Study Stats</h1>
+
+<div class="card">
+  <form method="get" action="/study/stats">
+    <label class="muted">Dokumentum szűrő (opcionális)</label>
+    <select class="input" name="doc">
+      <option value="">— összes —</option>
+      {% for d in docs %}
+        {% if doc_selected == d.id %}
+          <option value="{{ d.id }}" selected>📄 {{ d.title }}</option>
+        {% else %}
+          <option value="{{ d.id }}">📄 {{ d.title }}</option>
+        {% endif %}
+      {% endfor %}
+    </select>
+    <div class="actions">
+      <button type="submit">🔁 Szűrés</button>
+      <a class="buttonlike" href="/study/export/csv{% if doc_selected %}?doc={{ doc_selected }}{% endif %}">⬇️ Export CSV</a>
+      <a class="buttonlike" href="/study">↩️ Study</a>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Összkép</h2>
+  <p class="muted">Összes kártya: <b>{{ total }}</b> | Esedékes: <b>{{ due }}</b></p>
+
+  <h3>📦 Box eloszlás</h3>
+  <ul>
+    <li>Box 1: {{ dist[1] }}</li>
+    <li>Box 2: {{ dist[2] }}</li>
+    <li>Box 3: {{ dist[3] }}</li>
+    <li>Box 4: {{ dist[4] }}</li>
+    <li>Box 5: {{ dist[5] }}</li>
+  </ul>
+
+  <h3>🎯 Utolsó 50 review</h3>
+  {% if acc.n == 0 %}
+    <p class="muted">Még nincs review adat.</p>
+  {% else %}
+    <p class="muted">
+      N={{ acc.n }} | ✅ {{ acc.correct }} | ❌ {{ acc.wrong }} | Találati arány: <b>{{ acc.rate }}%</b>
+    </p>
+  {% endif %}
+
+</div>
+
+<div class="card">
+  <h2>🔥 Gyenge kártyák (box=1)</h2>
+  {% if not weak %}
+    <p class="muted">Nincs külön kiemelt gyenge kártya.</p>
+  {% else %}
+    <ul>
+      {% for c in weak %}
+        <li style="margin-bottom:12px;">
+          <b>Q:</b> {{ c.question }}
+          <div class="muted">
+            box={{ c.box }} | due={{ c.due_at }}
+            {% if c.document_title %} | 📄 {{ c.document_title }}{% endif %}
+            {% if c.last_result is not none %} | last={{ '✅' if c.last_result==1 else '❌' }}{% endif %}
+          </div>
+          <div class="muted">{{ c.answer[:180] }}{% if c.answer|length > 180 %}…{% endif %}</div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+</div>
+{% endblock %}

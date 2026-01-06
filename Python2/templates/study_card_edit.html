@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+{% if card %}
+  <h1>✏️ Kártya szerkesztés</h1>
+{% else %}
+  <h1>➕ Új kártya</h1>
+{% endif %}
+
+<div class="card">
+  {% if card %}
+    <form method="post" action="/study/cards/{{ card.id }}/edit">
+  {% else %}
+    <form method="post" action="/study/cards/new">
+  {% endif %}
+
+    <label class="muted">Dokumentum (opcionális)</label>
+    <select class="input" name="document_id">
+      <option value="">— nincs —</option>
+      {% for d in docs %}
+        {% if doc_selected == d.id %}
+          <option value="{{ d.id }}" selected>📄 {{ d.title }}</option>
+        {% else %}
+          <option value="{{ d.id }}">📄 {{ d.title }}</option>
+        {% endif %}
+      {% endfor %}
+    </select>
+
+    <label class="muted">Kérdés (Q)</label>
+    <input class="input" name="question" required value="{{ card.question if card else '' }}" placeholder="pl. Mi az a csoportszelekció?" />
+
+    <label class="muted">Válasz (A)</label>
+    <textarea class="input" name="answer" rows="6" required placeholder="Rövid, egyértelmű válasz...">{{ card.answer if card else '' }}</textarea>
+
+    <div class="actions">
+      <button type="submit">💾 Mentés</button>
+      <a class="buttonlike" href="/study/cards">↩️ Vissza</a>
+      <a class="buttonlike" href="/study">🎯 Study</a>
+    </div>
+  </form>
+
+  {% if card %}
+    <form method="post" action="/study/cards/{{ card.id }}/delete" onsubmit="return confirm('Biztos törlöd?');" class="actions" style="margin-top:10px;">
+      <button type="submit" style="background:#3a1b1b;">🗑️ Törlés</button>
+    </form>
+  {% endif %}
+</div>
+{% endblock %}

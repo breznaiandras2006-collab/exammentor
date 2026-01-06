@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>🧭 Gyors beállítás (1 perc)</h1>
+<p class="muted">Később bármikor módosítható a Settings-ben.</p>
+
+<form method="post" class="card">
+  <h2>1) Milyen nyelven kéred a válaszokat?</h2>
+  <select name="answer_language" required>
+    <option value="auto" {% if s.answer_language=="auto" %}selected{% endif %}>🌍 Auto</option>
+    <option value="hu" {% if s.answer_language=="hu" %}selected{% endif %}>🇭🇺 HU</option>
+    <option value="en" {% if s.answer_language=="en" %}selected{% endif %}>🇬🇧 EN</option>
+    <option value="de" {% if s.answer_language=="de" %}selected{% endif %}>🇩🇪 DE</option>
+  </select>
+
+  <h2>2) Manuális mód?</h2>
+  <label class="row">
+    <input type="checkbox" name="manual_mode" value="1" {% if s.manual_mode %}checked{% endif %}/>
+    <span>🔒 Manual mode (mindig a választott nyelven válaszol)</span>
+  </label>
+
+  <h2>3) Fordítás stílusa</h2>
+  <label class="row">
+    <input type="radio" name="translation_style" value="precise" {% if s.translation_style=="precise" %}checked{% endif %}/>
+    <span>🎯 Pontos / szakmai</span>
+  </label>
+  <label class="row">
+    <input type="radio" name="translation_style" value="natural" {% if s.translation_style=="natural" %}checked{% endif %}/>
+    <span>💬 Természetes / folyékony</span>
+  </label>
+
+  <h2>4) Alap válaszmód</h2>
+  <select name="default_gpt_mode" required>
+    <option value="exam" {% if s.default_gpt_mode=="exam" %}selected{% endif %}>🧪 Vizsga</option>
+    <option value="teacher" {% if s.default_gpt_mode=="teacher" %}selected{% endif %}>👨‍🏫 Tanár</option>
+    <option value="quick" {% if s.default_gpt_mode=="quick" %}selected{% endif %}>⚡ Gyors</option>
+  </select>
+
+  <div class="actions">
+    <button type="submit">✅ Mentés és tovább</button>
+  </div>
+</form>
+{% endblock %}

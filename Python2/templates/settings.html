@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>⚙️ Settings</h1>
+
+<form method="post" class="card">
+  <h2>UI language</h2>
+  <select name="ui_lang" required>
+    <option value="hu" {% if s.ui_lang=="hu" %}selected{% endif %}>🇭🇺 HU</option>
+    <option value="en" {% if s.ui_lang=="en" %}selected{% endif %}>🇬🇧 EN</option>
+    <option value="de" {% if s.ui_lang=="de" %}selected{% endif %}>🇩🇪 DE</option>
+  </select>
+
+  <h2>Theme</h2>
+  <select name="theme" required>
+    <option value="dark" {% if s.theme=="dark" %}selected{% endif %}>🌙 Dark</option>
+    <option value="light" {% if s.theme=="light" %}selected{% endif %}>☀️ Light</option>
+  </select>
+
+  <h2>Answer language</h2>
+  <select name="answer_language" required>
+    <option value="auto" {% if s.answer_language=="auto" %}selected{% endif %}>🌍 Auto</option>
+    <option value="hu" {% if s.answer_language=="hu" %}selected{% endif %}>🇭🇺 HU</option>
+    <option value="en" {% if s.answer_language=="en" %}selected{% endif %}>🇬🇧 EN</option>
+    <option value="de" {% if s.answer_language=="de" %}selected{% endif %}>🇩🇪 DE</option>
+  </select>
+
+  <h2>Manual mode</h2>
+  <label class="row">
+    <input type="checkbox" name="manual_mode" value="1" {% if s.manual_mode %}checked{% endif %}/>
+    <span>🔒 Always answer in selected language</span>
+  </label>
+
+  <h2>Translation style</h2>
+  <label class="row">
+    <input type="radio" name="translation_style" value="precise" {% if s.translation_style=="precise" %}checked{% endif %}/>
+    <span>🎯 Precise (study/exam)</span>
+  </label>
+  <label class="row">
+    <input type="radio" name="translation_style" value="natural" {% if s.translation_style=="natural" %}checked{% endif %}/>
+    <span>💬 Natural (fluent)</span>
+  </label>
+
+  <h2>Default GPT mode</h2>
+  <select name="default_gpt_mode" required>
+    <option value="exam" {% if s.default_gpt_mode=="exam" %}selected{% endif %}>🧪 Exam</option>
+    <option value="teacher" {% if s.default_gpt_mode=="teacher" %}selected{% endif %}>👨‍🏫 Teacher</option>
+    <option value="quick" {% if s.default_gpt_mode=="quick" %}selected{% endif %}>⚡ Quick</option>
+  </select>
+
+  <div class="actions">
+    <button type="submit">💾 Save</button>
+  </div>
+</form>
+{% endblock %}

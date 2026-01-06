@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{{ title or "ExamMentor" }}</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">🧠 ExamMentor</div>
+    <nav class="nav">
+      <a href="/">Home</a>
+      <a href="/onboarding">Onboarding</a>
+      <a href="/documents">Documents</a>
+      <a href="/notes">Notes</a>
+      <a href="/ask">Ask</a>
+      <a href="/study">Study</a>
+      <a href="/pdf-tools">PDF Tools</a>
+      <a href="/settings">Settings</a>
+    </nav>
+  </header>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

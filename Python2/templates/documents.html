@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h1 class="page-title">📄 Documents</h1>
+
+<form method="post" action="/documents/upload" enctype="multipart/form-data" class="card">
+  <h2 style="margin-top:0;">Új PDF feltöltése</h2>
+
+  <label class="muted">Cím (opcionális)</label>
+  <input name="title" placeholder="Pl. Personality Psychology – Chapter 1" class="input"/>
+
+  <label class="muted">Nyelv</label>
+  <select name="language" class="input">
+    <option value="auto">🌐 Auto</option>
+    <option value="hu">🇭🇺 HU</option>
+    <option value="en">🇬🇧 EN</option>
+    <option value="de">🇩🇪 DE</option>
+  </select>
+
+  <label class="muted">PDF</label>
+  <input type="file" name="pdf" accept="application/pdf" required class="input"/>
+
+  <button type="submit" class="btn">⬆ Upload & Import</button>
+  <p class="muted">Szöveges PDF-eknél azonnal kinyerjük a textet. Scannelt PDF: OCR későbbi modul.</p>
+</form>
+
+<div class="card">
+  <h2 style="margin-top:0;">Feltöltött dokumentumok</h2>
+
+  {% if docs and docs|length > 0 %}
+    <ul class="list">
+      {% for d in docs %}
+        <li>
+          <a href="/documents/{{ d.id }}"><b>{{ d.title or d.original_name or ("Document " ~ d.id) }}</b></a>
+          <span class="muted">— {{ d.pages or "?" }} oldal • {{ d.language or "auto" }}</span>
+          <span class="muted"> • </span>
+          <a href="/documents/{{ d.id }}/file" target="_blank" rel="noopener">Open</a>
+          <span class="muted"> | </span>
+          <a href="/documents/{{ d.id }}/download">Download</a>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">Még nincs feltöltött dokumentum.</p>
+  {% endif %}
+</div>
+
+{% endblock %}

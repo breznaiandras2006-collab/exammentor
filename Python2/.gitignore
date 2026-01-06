@@ -1,0 +1,14 @@
+# local runtime / caches
+__pycache__/
+*.pyc
+.pythonlibs/
+.venv/
+
+# local data
+uploads/
+app.db
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/

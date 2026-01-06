@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>🧠 Mini quiz — {{ note.title }}</h1>
+
+<div class="card" style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+  <a class="btn" href="/notes/{{ note.id }}">← Back to note</a>
+  <a class="btn" href="/notes/{{ note.id }}/flashcards">🎴 Flashcards</a>
+  <a class="btn" href="/notes/{{ note.id }}/quiz?shuffle=1">🔀 Shuffle</a>
+  <a class="btn" href="/notes/{{ note.id }}/quiz?shuffle=0">➡️ Normal</a>
+</div>
+
+<div class="card">
+  {% if not cards %}
+    <p class="muted">Nincs flashcard. Előbb generáld a note oldalán.</p>
+  {% else %}
+    <ol>
+      {% for c in cards %}
+        <li style="margin-bottom:14px;">
+          <div><b>Q:</b> {{ c.question }}</div>
+          <details style="margin-top:6px;">
+            <summary>Show answer</summary>
+            <div class="muted" style="margin-top:6px;"><b>A:</b> {{ c.answer }}</div>
+          </details>
+        </li>
+      {% endfor %}
+    </ol>
+  {% endif %}
+</div>
+{% endblock %}

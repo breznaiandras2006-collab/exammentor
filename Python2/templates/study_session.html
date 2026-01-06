@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>🎯 Study Session</h1>
+
+<div class="card">
+  <form method="get" action="/study/session">
+    <label class="muted">Dokumentum szűrő (opcionális)</label>
+    <select class="input" name="doc">
+      <option value="">— összes —</option>
+      {% for d in docs %}
+        {% if doc_selected == d.id %}
+          <option value="{{ d.id }}" selected>📄 {{ d.title }}</option>
+        {% else %}
+          <option value="{{ d.id }}">📄 {{ d.title }}</option>
+        {% endif %}
+      {% endfor %}
+    </select>
+    <div class="actions">
+      <button type="submit">🔁 Szűrés</button>
+      <a class="buttonlike" href="/study">↩️ Study</a>
+    </div>
+  </form>
+</div>
+
+{% if not card %}
+  <div class="card">
+    <h2>✅ Nincs esedékes kártya</h2>
+    <p class="muted">Vagy még nem generáltál kártyákat, vagy minden “due” a jövőben van.</p>
+    <div class="actions">
+      <a class="buttonlike" href="/study">⚙️ Generálás</a>
+    </div>
+  </div>
+{% else %}
+  <div class="card">
+    {% if practice == 1 %}
+      <div class="muted">🧪 Gyakorló mód: nincs esedékes kártya, véletlenül választottunk egyet.</div>
+      <hr style="border:0;border-top:1px solid #222;margin:12px 0;">
+    {% endif %}
+    <div class="muted">
+      box={{ card.box }} | due={{ card.due_at }}
+      {% if card.document_title %} | 📄 {{ card.document_title }}{% endif %}
+      {% if practice == 1 %}<span class="muted"> | 🎯 Practice (nem esedékes)</span>{% endif %}
+    </div>
+
+    <h2>❓ {{ card.question }}</h2>
+
+    {% if show == 1 %}
+      <hr style="border:0;border-top:1px solid #222;margin:12px 0;">
+      <pre style="white-space:pre-wrap; font-family:inherit; margin:0;">{{ card.answer }}</pre>
+
+      <form method="post" action="/study/review" class="actions" style="margin-top:12px;">
+        <input type="hidden" name="card_id" value="{{ card.id }}">
+        <input type="hidden" name="doc" value="{{ doc_selected if doc_selected else '' }}">
+        <button type="submit" name="correct" value="1">✅ Tudtam</button>
+        <button type="submit" name="correct" value="0">❌ Nem tudtam</button>
+      </form>
+    {% else %}
+      <div class="actions">
+        <a class="buttonlike" href="/study/session?show=1&card_id={{ card.id }}&practice={{ practice }}{% if doc_selected %}&doc={{ doc_selected }}{% endif %}">👀 Mutasd a választ</a>
+      </div>
+    {% endif %}
+  </div>
+{% endif %}
+{% endblock %}
