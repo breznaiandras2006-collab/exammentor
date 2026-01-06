@@ -47,7 +47,10 @@ from tools import (
     parse_ranges,
     merge_pdf_bytes,
     delete_pages_pdf_bytes,
-    rotate_pages_pdf_bytes,
+    rotate_pages_pdf_bytes,    parse_page_sequence,
+    extract_pages_pdf_bytes,
+    reorder_pages_pdf_bytes,
+
 )
 
 app = FastAPI()
@@ -786,6 +789,98 @@ def pdf_tools_rotate(request: Request, doc_id: int = Form(...), ranges_text: str
     new_doc = get_document(new_id)
 
     ctx = {"request": request, "docs": list_documents(), "result": "✅ Rotated (new document created).", "created_docs": [new_doc] if new_doc else []}
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("pdf_tools.html", ctx)
+
+
+
+
+@app.post("/pdf-tools/extract-pages", response_class=HTMLResponse)
+def pdf_tools_extract_pages(request: Request, doc_id: int = Form(...), ranges_text: str = Form("")):
+    doc = get_document(doc_id)
+    if not doc:
+        ctx = {"request": request, "docs": list_documents(), "result": "❌ Document not found", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+
+    try:
+        ranges = parse_ranges(ranges_text)
+    except Exception:
+        ranges = []
+    if not ranges:
+        ctx = {"request": request, "docs": list_documents(), "result": "⚠️ Adj meg oldaltartományt pl: 1-2, 4", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+
+    fp = UPLOAD_DIR / (doc.get("stored_name") or "")
+    if not fp.exists():
+        ctx = {"request": request, "docs": list_documents(), "result": "❌ File missing", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+
+    try:
+        out = extract_pages_pdf_bytes(fp.read_bytes(), ranges)
+    except Exception as e:
+        ctx = {"request": request, "docs": list_documents(), "result": f"❌ Extract failed: {e}", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+
+    original_out = f"extract_{doc.get('original_name','document.pdf')}"
+    title_out = f"Extract — {doc.get('title') or doc.get('original_name','PDF')}"
+    new_id = _store_pdf_bytes_as_document(out, title=title_out, original_name=original_out, language=doc.get("language") or "auto")
+    new_doc = get_document(new_id)
+
+    ctx = {"request": request, "docs": list_documents(), "result": "✅ Extracted PDF created.", "created_docs": [new_doc] if new_doc else []}
+    ctx.update(_settings_context())
+    return templates.TemplateResponse("pdf_tools.html", ctx)
+
+
+@app.post("/pdf-tools/reorder", response_class=HTMLResponse)
+def pdf_tools_reorder(request: Request, doc_id: int = Form(...), sequence_text: str = Form("")):
+    doc = get_document(doc_id)
+    if not doc:
+        ctx = {"request": request, "docs": list_documents(), "result": "❌ Document not found", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+
+    fp = UPLOAD_DIR / (doc.get("stored_name") or "")
+    if not fp.exists():
+        ctx = {"request": request, "docs": list_documents(), "result": "❌ File missing", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=404)
+
+    data = fp.read_bytes()
+    total = 0
+    try:
+        total = pdf_page_count(data)
+    except Exception:
+        total = 0
+
+    try:
+        seq = parse_page_sequence(sequence_text, total_pages=total or 10**9)
+    except Exception as e:
+        ctx = {"request": request, "docs": list_documents(), "result": f"⚠️ Hibás sorrend (példa: 3,1,2,5-7). {e}", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+
+    if not seq:
+        ctx = {"request": request, "docs": list_documents(), "result": "⚠️ Adj meg oldalsorrendet (példa: 3,1,2,5-7).", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+
+    try:
+        out = reorder_pages_pdf_bytes(data, seq)
+    except Exception as e:
+        ctx = {"request": request, "docs": list_documents(), "result": f"❌ Reorder failed: {e}", "created_docs": []}
+        ctx.update(_settings_context())
+        return templates.TemplateResponse("pdf_tools.html", ctx, status_code=400)
+
+    original_out = f"reorder_{doc.get('original_name','document.pdf')}"
+    title_out = f"Reorder — {doc.get('title') or doc.get('original_name','PDF')}"
+    new_id = _store_pdf_bytes_as_document(out, title=title_out, original_name=original_out, language=doc.get("language") or "auto")
+    new_doc = get_document(new_id)
+
+    ctx = {"request": request, "docs": list_documents(), "result": "✅ Reordered PDF created.", "created_docs": [new_doc] if new_doc else []}
     ctx.update(_settings_context())
     return templates.TemplateResponse("pdf_tools.html", ctx)
 

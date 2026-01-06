@@ -98,6 +98,48 @@
   </form>
 </div>
 
+<div class="card">
+  <h2 style="margin-top:0;">📤 Oldalak kivágása (Extract)</h2>
+  <form method="post" action="/pdf-tools/extract-pages">
+    <label class="muted">Dokumentum</label>
+    <select class="input" name="doc_id" required>
+      <option value="">— válassz —</option>
+      {% for d in docs %}
+        <option value="{{ d.id }}">#{{ d.id }} — {{ d.title }} ({{ d.pages or d.page_count or "?" }} oldal)</option>
+      {% endfor %}
+    </select>
+
+    <label class="muted">Tartományok (példa: 1-2, 4)</label>
+    <input class="input" name="ranges_text" placeholder="1-2, 4" />
+
+    <div class="actions">
+      <button type="submit">Extract</button>
+    </div>
+    <p class="muted">Új dokumentumot hoz létre a kiválasztott oldalakkal.</p>
+  </form>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0;">🔀 Oldalsorrend (Reorder)</h2>
+  <form method="post" action="/pdf-tools/reorder">
+    <label class="muted">Dokumentum</label>
+    <select class="input" name="doc_id" required>
+      <option value="">— válassz —</option>
+      {% for d in docs %}
+        <option value="{{ d.id }}">#{{ d.id }} — {{ d.title }} ({{ d.pages or d.page_count or "?" }} oldal)</option>
+      {% endfor %}
+    </select>
+
+    <label class="muted">Sorrend (példa: 3,1,2, 5-7)</label>
+    <input class="input" name="sequence_text" placeholder="3,1,2, 5-7" />
+
+    <div class="actions">
+      <button type="submit">Reorder</button>
+    </div>
+    <p class="muted">Tipp: duplikálás is mehet (pl. 1,1,2).</p>
+  </form>
+</div>
+
 {% if result %}
   <div class="card">
     <b>✅ Info:</b>
